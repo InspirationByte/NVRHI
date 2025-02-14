@@ -135,7 +135,7 @@ namespace nvrhi::validation
         void evaluatePushConstantSize(const nvrhi::BindingLayoutVector& bindingLayouts);
         bool validatePushConstants(const char* pipelineType, const char* stateFunctionName) const;
         bool validateBindingSetsAgainstLayouts(const static_vector<BindingLayoutHandle, c_MaxBindingLayouts>& layouts, const static_vector<IBindingSet*, c_MaxBindingLayouts>& sets) const;
-
+        bool validateRenderState(const RenderState& renderState, IFramebuffer* fb) const;
         bool validateBuildTopLevelAccelStruct(AccelStructWrapper* wrapper, size_t numInstances, rt::AccelStructBuildFlags buildFlags) const;
 
     public:
@@ -239,7 +239,6 @@ namespace nvrhi::validation
         bool validateBindingSetItem(const BindingSetItem& binding, bool isDescriptorTable, std::stringstream& errorStream);
         bool validatePipelineBindingLayouts(const static_vector<BindingLayoutHandle, c_MaxBindingLayouts>& bindingLayouts, const std::vector<IShader*>& shaders) const;
         bool validateShaderType(ShaderType expected, const ShaderDesc& shaderDesc, const char* function) const;
-        bool validateRenderState(const RenderState& renderState, IFramebuffer* fb) const;
 
         bool validateClusterOperationParams(const rt::cluster::OperationParams& params) const;
     public:
@@ -298,11 +297,11 @@ namespace nvrhi::validation
 
         FramebufferHandle createFramebuffer(const FramebufferDesc& desc) override;
 
-        GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, IFramebuffer* fb) override;
+        GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, const FramebufferInfo& fbInfo) override;
 
         ComputePipelineHandle createComputePipeline(const ComputePipelineDesc& desc) override;
 
-        MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, IFramebuffer* fb) override;
+        MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, const FramebufferInfo& fbInfo) override;
 
         rt::PipelineHandle createRayTracingPipeline(const rt::PipelineDesc& desc) override;
 

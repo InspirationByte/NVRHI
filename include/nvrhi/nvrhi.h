@@ -3017,11 +3017,11 @@ namespace nvrhi
         
         virtual FramebufferHandle createFramebuffer(const FramebufferDesc& desc) = 0;
         
-        virtual GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, IFramebuffer* fb) = 0;
+        virtual GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, const FramebufferInfo& fbInfo) = 0;
         
         virtual ComputePipelineHandle createComputePipeline(const ComputePipelineDesc& desc) = 0;
 
-        virtual MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, IFramebuffer* fb) = 0;
+        virtual MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, const FramebufferInfo& fbInfo) = 0;
 
         virtual rt::PipelineHandle createRayTracingPipeline(const rt::PipelineDesc& desc) = 0;
         

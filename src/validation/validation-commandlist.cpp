@@ -516,6 +516,47 @@ namespace nvrhi::validation
         return !anyErrors;
     }
 
+    bool CommandListWrapper::validateRenderState(const RenderState& renderState, IFramebuffer* fb) const
+    {
+        if (!fb)
+        {
+            error("framebuffer is NULL");
+            return false;
+        }
+
+        const auto fbDesc = fb->getDesc();
+
+        if (renderState.depthStencilState.depthTestEnable ||
+            renderState.depthStencilState.stencilEnable)
+        {
+            if (!fbDesc.depthAttachment.valid())
+            {
+                error("The depth-stencil state indicates that depth or stencil operations are used, "
+                    "but the framebuffer has no depth attachment.");
+                return false;
+            }
+        }
+
+        if ((renderState.depthStencilState.depthTestEnable && renderState.depthStencilState.depthWriteEnable) ||
+            (renderState.depthStencilState.stencilEnable && renderState.depthStencilState.stencilWriteMask != 0))
+        {
+            if (fbDesc.depthAttachment.isReadOnly)
+            {
+                error("The depth-stencil state indicates that depth or stencil writes are used, "
+                    "but the framebuffer's depth attachment is read-only.");
+                return false;
+            }
+        }
+
+        if (renderState.rasterState.conservativeRasterEnable && !m_Device->queryFeatureSupport(Feature::ConservativeRasterization))
+        {
+            warning("Conservative rasterization is not supported on this device");
+            return false;
+        }
+
+        return true;
+    }
+
     void CommandListWrapper::setPushConstants(const void* data, size_t byteSize)
     {
         if (!requireOpenState())
@@ -616,6 +657,9 @@ namespace nvrhi::validation
             error(ss.str());
             return;
         }
+
+        if (!validateRenderState(state.pipeline->getDesc().renderState, state.framebuffer))
+            anyErrors = true;
 
         if (!validateBindingSetsAgainstLayouts(state.pipeline->getDesc().bindingLayouts, state.bindings))
             anyErrors = true;

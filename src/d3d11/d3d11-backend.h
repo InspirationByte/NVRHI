@@ -481,11 +481,11 @@ namespace nvrhi::d3d11
 
         FramebufferHandle createFramebuffer(const FramebufferDesc& desc) override;
 
-        GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, IFramebuffer* fb) override;
+        GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, const FramebufferInfo& fbInfo) override;
 
         ComputePipelineHandle createComputePipeline(const ComputePipelineDesc& desc) override;
 
-        MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, IFramebuffer* fb) override;
+        MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, const FramebufferInfo& fbInfo) override;
 
         rt::PipelineHandle createRayTracingPipeline(const rt::PipelineDesc& desc) override;
 
