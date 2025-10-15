@@ -85,6 +85,9 @@ namespace nvrhi::d3d12
         const RasterState& rasterState = state.renderState.rasterState;
         TranslateRasterizerState(rasterState, desc.RasterizerState);
 
+        // SoapyMan TODO: GraphicsPipelineState parameter
+        desc.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFF;
+
         switch (state.primType)
         {
         case PrimitiveType::PointList:
