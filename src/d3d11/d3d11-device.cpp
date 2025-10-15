@@ -350,7 +350,7 @@ namespace nvrhi::d3d11
 
         desc11.MipLODBias = d.mipBias;
         desc11.MaxAnisotropy = std::max((UINT)d.maxAnisotropy, 1U);
-        desc11.ComparisonFunc = D3D11_COMPARISON_LESS;
+        desc11.ComparisonFunc = convertComparisonFunc(d.comparisonFunc);
         desc11.BorderColor[0] = d.borderColor.r;
         desc11.BorderColor[1] = d.borderColor.g;
         desc11.BorderColor[2] = d.borderColor.b;

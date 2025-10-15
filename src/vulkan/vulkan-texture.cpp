@@ -811,7 +811,7 @@ namespace nvrhi::vulkan
                             .setAnisotropyEnable(anisotropyEnable)
                             .setMaxAnisotropy(anisotropyEnable ? desc.maxAnisotropy : 1.f)
                             .setCompareEnable(desc.reductionType == SamplerReductionType::Comparison)
-                            .setCompareOp(vk::CompareOp::eLess)
+                            .setCompareOp(convertCompareOp(desc.comparisonFunc))
                             .setMinLod(0.f)
                             .setMaxLod(std::numeric_limits<float>::max())
                             .setBorderColor(pickSamplerBorderColor(desc));
