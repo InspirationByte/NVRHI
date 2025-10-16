@@ -1491,12 +1491,15 @@ namespace nvrhi::validation
                     return false;
                 }
 
+                // SoapyMan: size alignment doesn't matter. Offset alignment does.
+                /*
                 if (range.byteSize == 0 || (range.byteSize % c_ConstantBufferOffsetSizeAlignment) != 0)
                 {
                     errorStream << "Constant buffer bindings must have nonzero byteSize that is a multiple of " << c_ConstantBufferOffsetSizeAlignment << " bytes. Buffer "
                         << utils::DebugNameToString(desc.debugName) << " is bound with effective byteSize = " << range.byteSize << ".";
                     return false;
                 }
+                */
             }
 
             if (binding.type == ResourceType::VolatileConstantBuffer && !binding.range.isEntireBuffer(desc))
