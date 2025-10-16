@@ -1036,48 +1036,7 @@ namespace nvrhi::validation
         return false;
     }
 
-    bool DeviceWrapper::validateRenderState(const RenderState& renderState, IFramebuffer* fb) const
-    {
-        if (!fb)
-        {
-            error("framebuffer is NULL");
-            return false;
-        }
-
-        const auto fbDesc = fb->getDesc();
-
-        if (renderState.depthStencilState.depthTestEnable ||
-            renderState.depthStencilState.stencilEnable)
-        {
-            if (!fbDesc.depthAttachment.valid())
-            {
-                error("The depth-stencil state indicates that depth or stencil operations are used, "
-                    "but the framebuffer has no depth attachment.");
-                return false;
-            }
-        }
-
-        if ((renderState.depthStencilState.depthTestEnable && renderState.depthStencilState.depthWriteEnable) ||
-            (renderState.depthStencilState.stencilEnable && renderState.depthStencilState.stencilWriteMask != 0))
-        {
-            if (fbDesc.depthAttachment.isReadOnly)
-            {
-                error("The depth-stencil state indicates that depth or stencil writes are used, "
-                    "but the framebuffer's depth attachment is read-only.");
-                return false;
-            }
-        }
-
-        if (renderState.rasterState.conservativeRasterEnable && !m_Device->queryFeatureSupport(Feature::ConservativeRasterization))
-        {
-            warning("Conservative rasterization is not supported on this device");
-            return false;
-        }
-
-        return true;
-    }
-
-    GraphicsPipelineHandle DeviceWrapper::createGraphicsPipeline(const GraphicsPipelineDesc& pipelineDesc, IFramebuffer* fb)
+    GraphicsPipelineHandle DeviceWrapper::createGraphicsPipeline(const GraphicsPipelineDesc& pipelineDesc, const FramebufferInfo& fbInfo)
     {
         std::vector<IShader*> shaders;
 
@@ -1096,10 +1055,7 @@ namespace nvrhi::validation
         if (!validatePipelineBindingLayouts(pipelineDesc.bindingLayouts, shaders))
             return nullptr;
 
-        if (!validateRenderState(pipelineDesc.renderState, fb))
-            return nullptr;
-
-        return m_Device->createGraphicsPipeline(pipelineDesc, fb);
+        return m_Device->createGraphicsPipeline(pipelineDesc, fbInfo);
     }
 
     ComputePipelineHandle DeviceWrapper::createComputePipeline(const ComputePipelineDesc& pipelineDesc)
@@ -1121,7 +1077,7 @@ namespace nvrhi::validation
         return m_Device->createComputePipeline(pipelineDesc);
     }
 
-    MeshletPipelineHandle DeviceWrapper::createMeshletPipeline(const MeshletPipelineDesc& pipelineDesc, IFramebuffer* fb)
+    MeshletPipelineHandle DeviceWrapper::createMeshletPipeline(const MeshletPipelineDesc& pipelineDesc, const FramebufferInfo& fbInfo)
     {
         std::vector<IShader*> shaders;
 
@@ -1140,10 +1096,7 @@ namespace nvrhi::validation
         if (!validatePipelineBindingLayouts(pipelineDesc.bindingLayouts, shaders))
             return nullptr;
 
-        if (!validateRenderState(pipelineDesc.renderState, fb))
-            return nullptr;
-
-        return m_Device->createMeshletPipeline(pipelineDesc, fb);
+        return m_Device->createMeshletPipeline(pipelineDesc, fbInfo);
     }
 
     nvrhi::rt::PipelineHandle DeviceWrapper::createRayTracingPipeline(const rt::PipelineDesc& desc)

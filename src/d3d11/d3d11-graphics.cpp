@@ -50,7 +50,7 @@ namespace nvrhi::d3d11
         return FramebufferHandle::Create(ret);
     }
     
-    GraphicsPipelineHandle Device::createGraphicsPipeline(const GraphicsPipelineDesc& desc, IFramebuffer* fb)
+    GraphicsPipelineHandle Device::createGraphicsPipeline(const GraphicsPipelineDesc& desc, const FramebufferInfo& fbInfo)
     {
         const RenderState& renderState = desc.renderState;
 
@@ -62,7 +62,7 @@ namespace nvrhi::d3d11
 
         GraphicsPipeline *pso = new GraphicsPipeline();
         pso->desc = desc;
-        pso->framebufferInfo = fb->getFramebufferInfo();
+        pso->framebufferInfo = fbInfo;
 
         pso->primitiveTopology = convertPrimType(desc.primType, desc.patchControlPoints);
         pso->inputLayout = checked_cast<InputLayout*>(desc.inputLayout.Get());
