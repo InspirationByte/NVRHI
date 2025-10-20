@@ -29,6 +29,7 @@
 #endif
 
 #include <d3d12.h>
+#include <dxgi.h>
 
 namespace nvrhi
 {
@@ -114,6 +115,7 @@ namespace nvrhi::d3d12
     {
         IMessageCallback* errorCB = nullptr;
         ID3D12Device* pDevice = nullptr;
+        IDXGIAdapter1* pAdapter = nullptr;
         ID3D12CommandQueue* pGraphicsCommandQueue = nullptr;
         ID3D12CommandQueue* pComputeCommandQueue = nullptr;
         ID3D12CommandQueue* pCopyCommandQueue = nullptr;

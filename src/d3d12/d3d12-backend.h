@@ -83,6 +83,9 @@
 #ifdef NVRHI_WITH_RTXMU
 #include <rtxmu/D3D12AccelStructManager.h>
 #endif
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+#include <D3D12MemAlloc.h>
+#endif
 
 namespace nvrhi::d3d12
 {
@@ -120,8 +123,12 @@ namespace nvrhi::d3d12
         RefCountPtr<ID3D12Device2> device2;
         RefCountPtr<ID3D12Device5> device5;
         RefCountPtr<ID3D12Device8> device8;
+        RefCountPtr<IDXGIAdapter1> adapter;
 #ifdef NVRHI_WITH_RTXMU
         std::unique_ptr<rtxmu::DxAccelStructManager> rtxMemUtil;
+#endif
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        RefCountPtr<D3D12MA::Allocator> allocator;
 #endif
 
         RefCountPtr<ID3D12CommandSignature> drawIndirectSignature;
@@ -245,6 +252,9 @@ namespace nvrhi::d3d12
     public:
         HeapDesc desc;
         RefCountPtr<ID3D12Heap> heap;
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        RefCountPtr<D3D12MA::Allocation> allocation;
+#endif
 
         const HeapDesc& getDesc() override { return desc; }
     };
@@ -255,6 +265,9 @@ namespace nvrhi::d3d12
         const TextureDesc desc;
         const D3D12_RESOURCE_DESC resourceDesc;
         RefCountPtr<ID3D12Resource> resource;
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        RefCountPtr<D3D12MA::Allocation> allocation;
+#endif
         uint8_t planeCount = 1;
         HANDLE sharedHandle = nullptr;
         HeapHandle heap;
@@ -300,6 +313,9 @@ namespace nvrhi::d3d12
     public:
         const BufferDesc desc;
         RefCountPtr<ID3D12Resource> resource;
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        RefCountPtr<D3D12MA::Allocation> allocation;
+#endif
         D3D12_GPU_VIRTUAL_ADDRESS gpuVA{};
         D3D12_RESOURCE_DESC resourceDesc{};
 
@@ -343,6 +359,9 @@ namespace nvrhi::d3d12
         TextureDesc desc;
         D3D12_RESOURCE_DESC resourceDesc{};
         RefCountPtr<Buffer> buffer;
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        RefCountPtr<D3D12MA::Allocation> allocation;
+#endif
         CpuAccessMode cpuAccess = CpuAccessMode::None;
         std::vector<UINT64> subresourceOffsets;
 
@@ -380,6 +399,9 @@ namespace nvrhi::d3d12
         const SamplerFeedbackTextureDesc desc;
         const TextureDesc textureDesc; // used with state tracking
         RefCountPtr<ID3D12Resource> resource;
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        RefCountPtr<D3D12MA::Allocation> allocation;
+#endif
         TextureHandle pairedTexture;
 
         SamplerFeedbackTexture(const Context& context, DeviceResources& resources, SamplerFeedbackTextureDesc desc, TextureDesc textureDesc, ITexture* pairedTexture)
@@ -693,6 +715,9 @@ namespace nvrhi::d3d12
         static const uint64_t c_sizeAlignment = 4096; // GPU page size
 
         RefCountPtr<ID3D12Resource> buffer;
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        RefCountPtr<D3D12MA::Allocation> allocation;
+#endif
         uint64_t version = 0;
         uint64_t bufferSize = 0;
         uint64_t writePointer = 0;

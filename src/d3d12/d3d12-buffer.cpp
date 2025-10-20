@@ -130,7 +130,8 @@ namespace nvrhi::d3d12
         }
 
         // Allow readback buffers to be used as resolve destination targets
-        if ((buffer->desc.cpuAccess == CpuAccessMode::Read) && (d.initialState == ResourceStates::ResolveDest))
+        const bool isResolveReadbackBuffer = (buffer->desc.cpuAccess == CpuAccessMode::Read) && (d.initialState == ResourceStates::ResolveDest);
+        if (isResolveReadbackBuffer)
         {
             heapProps.Type = D3D12_HEAP_TYPE_CUSTOM;
             heapProps.CPUPageProperty = D3D12_CPU_PAGE_PROPERTY_WRITE_BACK;
@@ -138,13 +139,34 @@ namespace nvrhi::d3d12
             initialState = D3D12_RESOURCE_STATE_RESOLVE_DEST;
         }
 
-        HRESULT res = m_Context.device->CreateCommittedResource(
-            &heapProps,
-            heapFlags,
-            &resourceDesc,
-            initialState,
-            nullptr,
-            IID_PPV_ARGS(&buffer->resource));
+        HRESULT res;
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        if (!isResolveReadbackBuffer)
+        {
+            D3D12MA::ALLOCATION_DESC allocDesc{};
+            allocDesc.Flags = D3D12MA::ALLOCATION_FLAG_WITHIN_BUDGET;
+            allocDesc.HeapType = heapProps.Type;
+            allocDesc.ExtraHeapFlags = heapFlags;
+
+            res = m_Context.allocator->CreateResource(
+                &allocDesc,
+                &resourceDesc,
+                convertResourceStates(d.initialState),
+                nullptr,
+                &buffer->allocation,
+                IID_PPV_ARGS(&buffer->resource));
+        }
+        else
+#endif // NVRHI_D3D12_WITH_D3D12MA
+        {
+            HRESULT res = m_Context.device->CreateCommittedResource(
+                &heapProps,
+                heapFlags,
+                &resourceDesc,
+                initialState,
+                nullptr,
+                IID_PPV_ARGS(&buffer->resource));
+        }
 
         if (FAILED(res))
         {
@@ -196,6 +218,10 @@ namespace nvrhi::d3d12
             // the driver will track the resource internally so don't need to keep the handle around
             GFSDK_Aftermath_ResourceHandle resourceHandle = {};
             GFSDK_Aftermath_DX12_RegisterResource(resource, &resourceHandle);
+#endif
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+            if (allocation)
+                allocation->SetName(wname.c_str());
 #endif
         }
 
