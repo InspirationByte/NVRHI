@@ -93,6 +93,7 @@ namespace nvrhi::d3d12
         : m_Resources(m_Context, desc)
     {
         m_Context.device = desc.pDevice;
+        m_Context.adapter = desc.pAdapter;
         m_Context.logBufferLifetime = desc.logBufferLifetime;
         m_Context.messageCallback = desc.errorCB;
 
@@ -280,6 +281,23 @@ namespace nvrhi::d3d12
             m_HeapDirectlyIndexedEnabled = m_Options.ResourceBindingTier >= D3D12_RESOURCE_BINDING_TIER_3 && 
                 hasShaderModel && shaderModel.HighestShaderModel >= D3D_SHADER_MODEL_6_6;
         }
+
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        {
+            D3D12MA::ALLOCATOR_DESC allocatorDesc{};
+            allocatorDesc.Flags = static_cast<D3D12MA::ALLOCATOR_FLAGS>(D3D12MA_RECOMMENDED_ALLOCATOR_FLAGS);
+            allocatorDesc.pDevice = m_Context.device.Get();
+            allocatorDesc.pAdapter = m_Context.adapter.Get();
+
+            HRESULT hr = D3D12MA::CreateAllocator(&allocatorDesc, &m_Context.allocator);
+            if (!SUCCEEDED(hr))
+            {
+                std::stringstream ss;
+                ss << "D3D12 Allocator initialization failed, result = 0x" << std::hex << std::setw(8) << hr;
+                m_Context.error(ss.str());
+            }
+        }
+#endif // #ifdef NVRHI_D3D12_WITH_D3D12MA
     }
 
     Device::~Device()

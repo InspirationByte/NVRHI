@@ -350,6 +350,20 @@ namespace nvrhi::d3d12
         {
             heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
 
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+            D3D12MA::ALLOCATION_DESC allocDesc{};
+            allocDesc.Flags = D3D12MA::ALLOCATION_FLAG_WITHIN_BUDGET;
+            allocDesc.HeapType = heapProps.Type;
+            allocDesc.ExtraHeapFlags = heapFlags;
+
+            hr = m_Context.allocator->CreateResource(
+                &allocDesc,
+                &texture->resourceDesc,
+                convertResourceStates(d.initialState),
+                d.useClearValue ? &clearValue : nullptr,
+                &texture->allocation,
+                IID_PPV_ARGS(&texture->resource));
+#else
             hr = m_Context.device->CreateCommittedResource(
                 &heapProps,
                 heapFlags,
@@ -357,6 +371,7 @@ namespace nvrhi::d3d12
                 convertResourceStates(d.initialState),
                 d.useClearValue ? &clearValue : nullptr,
                 IID_PPV_ARGS(&texture->resource));
+#endif // NVRHI_D3D12_WITH_D3D12MA
         }
 
         if (FAILED(hr))
@@ -475,6 +490,10 @@ namespace nvrhi::d3d12
             // the driver will track the resource internally so don't need to keep the handle around
             GFSDK_Aftermath_ResourceHandle resourceHandle = {};
             GFSDK_Aftermath_DX12_RegisterResource(resource, &resourceHandle);
+#endif
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+            if (allocation)
+                allocation->SetName(wname.c_str());
 #endif
         }
 
@@ -907,6 +926,19 @@ namespace nvrhi::d3d12
 
         SamplerFeedbackTexture* texture = new SamplerFeedbackTexture(m_Context, m_Resources, desc, textureDesc, pairedTexture);
 
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        D3D12MA::ALLOCATION_DESC allocDesc{};
+        allocDesc.Flags = D3D12MA::ALLOCATION_FLAG_WITHIN_BUDGET;
+        allocDesc.HeapType = heapPropsDefault.Type;
+
+        HRESULT hr = m_Context.allocator->CreateResource2(
+            &allocDesc,
+            &rdFeedback,
+            convertResourceStates(desc.initialState),
+            nullptr, // clear value
+            &texture->allocation,
+            IID_PPV_ARGS(&texture->resource));
+#else
         HRESULT hr = m_Context.device8->CreateCommittedResource2(
             &heapPropsDefault,
             D3D12_HEAP_FLAG_NONE,
@@ -915,6 +947,7 @@ namespace nvrhi::d3d12
             nullptr, // clear value
             nullptr,
             IID_PPV_ARGS(&texture->resource));
+#endif // NVRHI_D3D12_WITH_D3D12MA
 
         if (FAILED(hr))
         {
@@ -931,6 +964,10 @@ namespace nvrhi::d3d12
         std::wstringstream ssName;
         ssName << "Sampler Feedback Texture: " << utils::DebugNameToString(descPair.debugName);
         texture->resource->SetName(ssName.str().c_str());
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        if (texture->allocation)
+            texture->allocation->SetName(ssName.str().c_str());
+#endif
 
         return SamplerFeedbackTextureHandle::Create(texture);
     }

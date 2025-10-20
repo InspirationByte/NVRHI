@@ -66,6 +66,19 @@ namespace nvrhi::d3d12
         bufferDesc.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
         if (m_IsScratchBuffer) bufferDesc.Flags = D3D12_RESOURCE_FLAG_ALLOW_UNORDERED_ACCESS;
 
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        D3D12MA::ALLOCATION_DESC allocDesc{};
+        allocDesc.Flags = D3D12MA::ALLOCATION_FLAG_WITHIN_BUDGET;
+        allocDesc.HeapType = heapProps.Type;
+
+        HRESULT hr = m_Context.allocator->CreateResource(
+            &allocDesc,
+            &bufferDesc,
+            m_IsScratchBuffer ? D3D12_RESOURCE_STATE_COMMON : D3D12_RESOURCE_STATE_GENERIC_READ,
+            nullptr,
+            &chunk->allocation,
+            IID_PPV_ARGS(&chunk->buffer));
+#else
         HRESULT hr = m_Context.device->CreateCommittedResource(
             &heapProps,
             D3D12_HEAP_FLAG_NONE,
@@ -73,6 +86,7 @@ namespace nvrhi::d3d12
             m_IsScratchBuffer ? D3D12_RESOURCE_STATE_COMMON: D3D12_RESOURCE_STATE_GENERIC_READ,
             nullptr,
             IID_PPV_ARGS(&chunk->buffer));
+#endif=
 
         if (FAILED(hr))
             return nullptr;
