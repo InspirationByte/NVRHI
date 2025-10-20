@@ -68,7 +68,7 @@ namespace nvrhi::d3d12
 
 #ifdef NVRHI_D3D12_WITH_D3D12MA
         D3D12MA::ALLOCATION_DESC allocDesc{};
-        allocDesc.Flags = D3D12MA::ALLOCATION_FLAG_WITHIN_BUDGET;
+        allocDesc.Flags = static_cast<D3D12MA::ALLOCATION_FLAGS>(D3D12MA::ALLOCATION_FLAG_WITHIN_BUDGET | D3D12MA::ALLOCATION_FLAG_STRATEGY_MIN_TIME);
         allocDesc.HeapType = heapProps.Type;
 
         HRESULT hr = m_Context.allocator->CreateResource(
