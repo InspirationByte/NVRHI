@@ -51,48 +51,48 @@ namespace nvrhi::d3d12
         {
         case nvrhi::ObjectTypes::D3D12_ShaderResourceViewGpuDescripror: {
             TextureBindingKey key = TextureBindingKey(subresources, format);
-            DescriptorIndex descriptorIndex;
+            DescriptorAlloc descriptorIndex;
             auto found = m_CustomSRVs.find(key);
             if (found == m_CustomSRVs.end())
             {
                 descriptorIndex = m_Resources.shaderResourceViewHeap.allocateDescriptor();
                 m_CustomSRVs[key] = descriptorIndex;
 
-                const D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex);
+                const D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex.offset);
                 createSRV(cpuHandle.ptr, format, dimension, subresources);
-                m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorIndex);
+                m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorIndex.offset);
             }
             else
             {
                 descriptorIndex = found->second;
             }
 
-            return Object(m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorIndex).ptr);
+            return Object(m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorIndex.offset).ptr);
         }
 
         case nvrhi::ObjectTypes::D3D12_UnorderedAccessViewGpuDescripror: {
             TextureBindingKey key = TextureBindingKey(subresources, format);
-            DescriptorIndex descriptorIndex;
+            DescriptorAlloc descriptorIndex;
             auto found = m_CustomUAVs.find(key);
             if (found == m_CustomUAVs.end())
             {
                 descriptorIndex = m_Resources.shaderResourceViewHeap.allocateDescriptor();
                 m_CustomUAVs[key] = descriptorIndex;
 
-                const D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex);
+                const D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex.offset);
                 createUAV(cpuHandle.ptr, format, dimension, subresources);
-                m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorIndex);
+                m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorIndex.offset);
             }
             else
             {
                 descriptorIndex = found->second;
             }
 
-            return Object(m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorIndex).ptr);
+            return Object(m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorIndex.offset).ptr);
         }
         case nvrhi::ObjectTypes::D3D12_RenderTargetViewDescriptor: {
             TextureBindingKey key = TextureBindingKey(subresources, format);
-            DescriptorIndex descriptorIndex;
+            DescriptorAlloc descriptorIndex;
 
             auto found = m_RenderTargetViews.find(key);
             if (found == m_RenderTargetViews.end())
@@ -100,7 +100,7 @@ namespace nvrhi::d3d12
                 descriptorIndex = m_Resources.renderTargetViewHeap.allocateDescriptor();
                 m_RenderTargetViews[key] = descriptorIndex;
 
-                const D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = m_Resources.renderTargetViewHeap.getCpuHandle(descriptorIndex);
+                const D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = m_Resources.renderTargetViewHeap.getCpuHandle(descriptorIndex.offset);
                 createRTV(cpuHandle.ptr, format, subresources);
             }
             else
@@ -108,12 +108,12 @@ namespace nvrhi::d3d12
                 descriptorIndex = found->second;
             }
 
-            return Object(m_Resources.renderTargetViewHeap.getCpuHandle(descriptorIndex).ptr);
+            return Object(m_Resources.renderTargetViewHeap.getCpuHandle(descriptorIndex.offset).ptr);
         }
 
         case nvrhi::ObjectTypes::D3D12_DepthStencilViewDescriptor: {
             TextureBindingKey key = TextureBindingKey(subresources, format, isReadOnlyDSV);
-            DescriptorIndex descriptorIndex;
+            DescriptorAlloc descriptorIndex;
 
             auto found = m_DepthStencilViews.find(key);
             if (found == m_DepthStencilViews.end())
@@ -121,7 +121,7 @@ namespace nvrhi::d3d12
                 descriptorIndex = m_Resources.depthStencilViewHeap.allocateDescriptor();
                 m_DepthStencilViews[key] = descriptorIndex;
 
-                const D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = m_Resources.depthStencilViewHeap.getCpuHandle(descriptorIndex);
+                const D3D12_CPU_DESCRIPTOR_HANDLE cpuHandle = m_Resources.depthStencilViewHeap.getCpuHandle(descriptorIndex.offset);
                 createDSV(cpuHandle.ptr, subresources, isReadOnlyDSV);
             }
             else
@@ -129,7 +129,7 @@ namespace nvrhi::d3d12
                 descriptorIndex = found->second;
             }
 
-            return Object(m_Resources.depthStencilViewHeap.getCpuHandle(descriptorIndex).ptr);
+            return Object(m_Resources.depthStencilViewHeap.getCpuHandle(descriptorIndex.offset).ptr);
         }
 
         default:
@@ -140,19 +140,19 @@ namespace nvrhi::d3d12
     Texture::~Texture()
     {
         for (auto pair : m_RenderTargetViews)
-            m_Resources.renderTargetViewHeap.releaseDescriptor(pair.second);
+            m_Resources.renderTargetViewHeap.releaseDescriptors(pair.second);
 
         for (auto pair : m_DepthStencilViews)
-            m_Resources.depthStencilViewHeap.releaseDescriptor(pair.second);
+            m_Resources.depthStencilViewHeap.releaseDescriptors(pair.second);
 
         for (auto index : m_ClearMipLevelUAVs)
-            m_Resources.shaderResourceViewHeap.releaseDescriptor(index);
+            m_Resources.shaderResourceViewHeap.releaseDescriptors(index);
 
         for (auto pair : m_CustomSRVs)
-            m_Resources.shaderResourceViewHeap.releaseDescriptor(pair.second);
+            m_Resources.shaderResourceViewHeap.releaseDescriptors(pair.second);
 
         for (auto pair : m_CustomUAVs)
-            m_Resources.shaderResourceViewHeap.releaseDescriptor(pair.second);
+            m_Resources.shaderResourceViewHeap.releaseDescriptors(pair.second);
     }
 
     StagingTexture::SliceRegion StagingTexture::getSliceRegion(ID3D12Device *device, const TextureSlice& slice)
@@ -500,25 +500,25 @@ namespace nvrhi::d3d12
         if (desc.isUAV)
         {
             m_ClearMipLevelUAVs.resize(desc.mipLevels);
-            std::fill(m_ClearMipLevelUAVs.begin(), m_ClearMipLevelUAVs.end(), c_InvalidDescriptorIndex);
+            std::fill(m_ClearMipLevelUAVs.begin(), m_ClearMipLevelUAVs.end(), DescriptorAlloc{});
         }
 
         planeCount = m_Resources.getFormatPlaneCount(resourceDesc.Format);
     }
 
-    DescriptorIndex Texture::getClearMipLevelUAV(uint32_t mipLevel)
+    DescriptorAlloc Texture::getClearMipLevelUAV(uint32_t mipLevel)
     {
         assert(desc.isUAV);
 
-        DescriptorIndex descriptorIndex = m_ClearMipLevelUAVs[mipLevel];
+        DescriptorAlloc descriptorIndex = m_ClearMipLevelUAVs[mipLevel];
 
-        if (descriptorIndex != c_InvalidDescriptorIndex)
+        if (descriptorIndex.metadata == DescriptorAlloc::NO_SPACE)
             return descriptorIndex;
 
         descriptorIndex = m_Resources.shaderResourceViewHeap.allocateDescriptor();
         TextureSubresourceSet subresources(mipLevel, 1, 0, TextureSubresourceSet::AllArraySlices);
-        createUAV(m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex).ptr, Format::UNKNOWN, TextureDimension::Unknown, subresources);
-        m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorIndex);
+        createUAV(m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex.offset).ptr, Format::UNKNOWN, TextureDimension::Unknown, subresources);
+        m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorIndex.offset);
         m_ClearMipLevelUAVs[mipLevel] = descriptorIndex;
 
         return descriptorIndex;
@@ -1050,13 +1050,13 @@ namespace nvrhi::d3d12
 
             for (MipLevel mipLevel = subresources.baseMipLevel; mipLevel < subresources.baseMipLevel + subresources.numMipLevels; mipLevel++)
             {
-                DescriptorIndex index = t->getClearMipLevelUAV(mipLevel);
+                DescriptorAlloc index = t->getClearMipLevelUAV(mipLevel);
 
                 assert(index != c_InvalidDescriptorIndex);
 
                 m_ActiveCommandList->commandList->ClearUnorderedAccessViewFloat(
-                    m_Resources.shaderResourceViewHeap.getGpuHandle(index),
-                    m_Resources.shaderResourceViewHeap.getCpuHandle(index),
+                    m_Resources.shaderResourceViewHeap.getGpuHandle(index.offset),
+                    m_Resources.shaderResourceViewHeap.getCpuHandle(index.offset),
                     t->resource, &clearColor.r, 0, nullptr);
             }
         }
@@ -1136,13 +1136,13 @@ namespace nvrhi::d3d12
 
             for (MipLevel mipLevel = subresources.baseMipLevel; mipLevel < subresources.baseMipLevel + subresources.numMipLevels; mipLevel++)
             {
-                DescriptorIndex index = t->getClearMipLevelUAV(mipLevel);
+                DescriptorAlloc index = t->getClearMipLevelUAV(mipLevel);
 
                 assert(index != c_InvalidDescriptorIndex);
 
                 m_ActiveCommandList->commandList->ClearUnorderedAccessViewUint(
-                    m_Resources.shaderResourceViewHeap.getGpuHandle(index),
-                    m_Resources.shaderResourceViewHeap.getCpuHandle(index),
+                    m_Resources.shaderResourceViewHeap.getGpuHandle(index.offset),
+                    m_Resources.shaderResourceViewHeap.getCpuHandle(index.offset),
                     t->resource, clearValues, 0, nullptr);
             }
         }
@@ -1168,20 +1168,20 @@ namespace nvrhi::d3d12
     {
         SamplerFeedbackTexture* texture = checked_cast<SamplerFeedbackTexture*>(_texture);
 
-        DescriptorIndex& descriptorIndex = texture->clearDescriptorIndex;
-        if (descriptorIndex == c_InvalidDescriptorIndex)
+        DescriptorAlloc& descriptorIndex = texture->clearDescriptorIndex;
+        if (descriptorIndex.metadata == DescriptorAlloc::NO_SPACE)
         {
             descriptorIndex = m_Resources.shaderResourceViewHeap.allocateDescriptor();
-            texture->createUAV(m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex).ptr);
-            m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorIndex);
+            texture->createUAV(m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex.offset).ptr);
+            m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorIndex.offset);
         }
 
         commitDescriptorHeaps();
 
         const UINT clearValue[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
         m_ActiveCommandList->commandList->ClearUnorderedAccessViewUint(
-            m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorIndex),
-            m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex),
+            m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorIndex.offset),
+            m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex.offset),
             texture->resource, clearValue, 0, nullptr);
     }
 
