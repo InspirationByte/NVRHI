@@ -662,7 +662,7 @@ namespace nvrhi::d3d12
 
         viewDesc.Format = getDxgiFormatMapping(format == Format::UNKNOWN ? desc.format : format).srvFormat;
 
-        switch (desc.dimension)
+        switch (dimension)
         {
         case TextureDimension::Texture1D:
             viewDesc.ViewDimension = D3D12_UAV_DIMENSION_TEXTURE1D;
@@ -924,7 +924,7 @@ namespace nvrhi::d3d12
         textureDesc.initialState = desc.initialState;
         textureDesc.keepInitialState = desc.keepInitialState;
 
-        SamplerFeedbackTexture* texture = new SamplerFeedbackTexture(m_Context, m_Resources, desc, textureDesc, pairedTexture);
+        SamplerFeedbackTexture* texture = new SamplerFeedbackTexture(m_Context, desc, textureDesc, pairedTexture);
 
 #ifdef NVRHI_D3D12_WITH_D3D12MA
         D3D12MA::ALLOCATION_DESC allocDesc{};
@@ -993,7 +993,7 @@ namespace nvrhi::d3d12
         textureDesc.initialState = ResourceStates::Unknown;
         textureDesc.keepInitialState = false;
 
-        SamplerFeedbackTexture* texture = new SamplerFeedbackTexture(m_Context, m_Resources, desc, textureDesc, pairedTexture);
+        SamplerFeedbackTexture* texture = new SamplerFeedbackTexture(m_Context, desc, textureDesc, pairedTexture);
         texture->resource = pResource;
 
         return SamplerFeedbackTextureHandle::Create(texture);
@@ -1168,7 +1168,21 @@ namespace nvrhi::d3d12
     {
         SamplerFeedbackTexture* texture = checked_cast<SamplerFeedbackTexture*>(_texture);
 
-        m_ActiveCommandList->commandList->DiscardResource(texture->resource, nullptr);
+        DescriptorIndex& descriptorIndex = texture->clearDescriptorIndex;
+        if (descriptorIndex == c_InvalidDescriptorIndex)
+        {
+            descriptorIndex = m_Resources.shaderResourceViewHeap.allocateDescriptor();
+            texture->createUAV(m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex).ptr);
+            m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorIndex);
+        }
+
+        commitDescriptorHeaps();
+
+        const UINT clearValue[4] = { 0xFF, 0xFF, 0xFF, 0xFF };
+        m_ActiveCommandList->commandList->ClearUnorderedAccessViewUint(
+            m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorIndex),
+            m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex),
+            texture->resource, clearValue, 0, nullptr);
     }
 
     void CommandList::decodeSamplerFeedbackTexture(IBuffer* _buffer, ISamplerFeedbackTexture* _texture, nvrhi::Format format)

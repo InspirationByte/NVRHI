@@ -37,8 +37,8 @@
 #include <rtxmu/VkAccelStructManager.h>
 #endif
 
-#if (VK_HEADER_VERSION < 230)
-#error "Vulkan SDK version 1.3.230 or later is required to compile NVRHI"
+#if (VK_HEADER_VERSION < 318)
+#error "Vulkan SDK version 1.4.318 or later is required to compile NVRHI"
 #endif
 
 namespace std
@@ -117,6 +117,10 @@ namespace nvrhi::vulkan
     vk::GeometryInstanceFlagsKHR convertInstanceFlags(rt::InstanceFlags instanceFlags);
     vk::Extent2D convertFragmentShadingRate(VariableShadingRate shadingRate);
     vk::FragmentShadingRateCombinerOpKHR convertShadingRateCombiner(ShadingRateCombiner combiner);
+    vk::DescriptorType convertResourceType(ResourceType type);
+    vk::ComponentTypeKHR convertCoopVecDataType(coopvec::DataType type);
+    coopvec::DataType convertCoopVecDataType(vk::ComponentTypeKHR type);
+    vk::CooperativeVectorMatrixLayoutNV convertCoopVecMatrixLayout(coopvec::MatrixLayout layout);
 
     void countSpecializationConstants(
         Shader* shader,
@@ -172,7 +176,10 @@ namespace nvrhi::vulkan
             bool EXT_conservative_rasterization = false;
             bool EXT_opacity_micromap = false;
             bool NV_ray_tracing_invocation_reorder = false;
+            bool NV_cluster_acceleration_structure = false;
+            bool EXT_mutable_descriptor_type = false;
             bool EXT_debug_utils = false;
+            bool NV_cooperative_vector = false;
 #if NVRHI_WITH_AFTERMATH
             bool NV_device_diagnostic_checkpoints = false;
             bool NV_device_diagnostics_config= false;
@@ -186,8 +193,13 @@ namespace nvrhi::vulkan
         vk::PhysicalDeviceFragmentShadingRatePropertiesKHR shadingRateProperties;
         vk::PhysicalDeviceOpacityMicromapPropertiesEXT opacityMicromapProperties;
         vk::PhysicalDeviceRayTracingInvocationReorderPropertiesNV nvRayTracingInvocationReorderProperties;
+        vk::PhysicalDeviceClusterAccelerationStructurePropertiesNV nvClusterAccelerationStructureProperties;
         vk::PhysicalDeviceFragmentShadingRateFeaturesKHR shadingRateFeatures;
+        vk::PhysicalDeviceCooperativeVectorFeaturesNV coopVecFeatures;
+        vk::PhysicalDeviceCooperativeVectorPropertiesNV coopVecProperties;
+        vk::PhysicalDeviceSubgroupProperties subgroupProperties;
         IMessageCallback* messageCallback = nullptr;
+        bool logBufferLifetime = false;
 #ifdef NVRHI_WITH_RTXMU
         std::unique_ptr<rtxmu::VkAccelStructManager> rtxMemUtil;
         std::unique_ptr<RtxMuResources> rtxMuResources;
@@ -198,6 +210,7 @@ namespace nvrhi::vulkan
             const vk::DebugReportObjectTypeEXT objtypeEXT, const char* name) const;
         void error(const std::string& message) const;
         void warning(const std::string& message) const;
+        void info(const std::string& message) const;
     };
 
     // command buffer with resource tracking
@@ -643,8 +656,7 @@ namespace nvrhi::vulkan
         std::vector<ShaderSpecialization> specializationConstants;
 
         explicit Shader(const VulkanContext& context)
-            : desc(ShaderType::None)
-            , m_Context(context)
+            : m_Context(context)
         { }
 
         ~Shader() override;
@@ -717,24 +729,17 @@ namespace nvrhi::vulkan
         FramebufferDesc desc;
         FramebufferInfoEx framebufferInfo;
         
-        vk::RenderPass renderPass = vk::RenderPass();
-        vk::Framebuffer framebuffer = vk::Framebuffer();
+        static_vector<vk::RenderingAttachmentInfo, c_MaxRenderTargets> colorAttachments;
+        vk::RenderingAttachmentInfo depthAttachment{};
+        vk::RenderingAttachmentInfo stencilAttachment{};
+        vk::RenderingFragmentShadingRateAttachmentInfoKHR shadingRateAttachment{};
 
         std::vector<ResourceHandle> resources;
 
         bool managed = true;
 
-        explicit Framebuffer(const VulkanContext& context)
-            : m_Context(context)
-        { }
-
-        ~Framebuffer() override;
         const FramebufferDesc& getDesc() const override { return desc; }
         const FramebufferInfoEx& getFramebufferInfo() const override { return framebufferInfo; }
-        Object getNativeObject(ObjectType objectType) override;
-
-    private:
-        const VulkanContext& m_Context;
     };
 
     class BindingLayout : public RefCounter<IBindingLayout>
@@ -1087,6 +1092,9 @@ namespace nvrhi::vulkan
         void getTextureTiling(ITexture* texture, uint32_t* numTiles, PackedMipDesc* desc, TileShape* tileShape, uint32_t* subresourceTilingsNum, SubresourceTiling* subresourceTilings) override;
         void updateTextureTileMappings(ITexture* texture, const TextureTilesMapping* tileMappings, uint32_t numTileMappings, CommandQueue executionQueue = CommandQueue::Graphics) override;
 
+        SamplerFeedbackTextureHandle createSamplerFeedbackTexture(ITexture* pairedTexture, const SamplerFeedbackTextureDesc& desc) override;
+        SamplerFeedbackTextureHandle createSamplerFeedbackForNativeTexture(ObjectType objectType, Object texture, ITexture* pairedTexture) override;
+
         BufferHandle createBuffer(const BufferDesc& d) override;
         void *mapBuffer(IBuffer* b, CpuAccessMode mapFlags) override;
         void unmapBuffer(IBuffer* b) override;
@@ -1120,9 +1128,17 @@ namespace nvrhi::vulkan
 
         FramebufferHandle createFramebuffer(const FramebufferDesc& desc) override;
 
+        GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, FramebufferInfo const& fbinfo) override;
+
+        GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, FramebufferInfo const& fbinfo) override;
+
         GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, const FramebufferInfo& fbInfo) override;
 
         ComputePipelineHandle createComputePipeline(const ComputePipelineDesc& desc) override;
+
+        MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, FramebufferInfo const& fbinfo) override;
+
+        MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, FramebufferInfo const& fbinfo) override;
 
         MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, const FramebufferInfo& fbInfo) override;
 
@@ -1150,6 +1166,8 @@ namespace nvrhi::vulkan
         void runGarbageCollection() override;
         bool queryFeatureSupport(Feature feature, void* pInfo = nullptr, size_t infoSize = 0) override;
         FormatSupport queryFormatSupport(Format format) override;
+        coopvec::DeviceFeatures queryCoopVecFeatures() override;
+        size_t getCoopVecMatrixSize(coopvec::DataType type, coopvec::MatrixLayout layout, int rows, int columns) override;
         Object getNativeQueue(ObjectType objectType, CommandQueue queue) override;
         IMessageCallback* getMessageCallback() override { return m_Context.messageCallback; }
         bool isAftermathEnabled() override { return m_AftermathEnabled; }
@@ -1160,10 +1178,13 @@ namespace nvrhi::vulkan
         void queueWaitForSemaphore(CommandQueue waitQueue, VkSemaphore semaphore, uint64_t value) override;
         void queueSignalSemaphore(CommandQueue executionQueue, VkSemaphore semaphore, uint64_t value) override;
         uint64_t queueGetCompletedInstance(CommandQueue queue) override;
-        FramebufferHandle createHandleForNativeFramebuffer(VkRenderPass renderPass, VkFramebuffer framebuffer,
-            const FramebufferDesc& desc, bool transferOwnership) override;
 
     private:
+        // Warning m_AftermathCrashDump helper must be first due to reverse destruction order
+        // Queues will destroy CommandLists which will unregister from m_AftermathCrashDumpHelper in their deconstructors
+        bool m_AftermathEnabled = false;
+        AftermathCrashDumpHelper m_AftermathCrashDumpHelper;
+
         VulkanContext m_Context;
         VulkanAllocator m_Allocator;
         
@@ -1176,8 +1197,6 @@ namespace nvrhi::vulkan
         std::array<std::unique_ptr<Queue>, uint32_t(CommandQueue::Count)> m_Queues;
         
         void *mapBuffer(IBuffer* b, CpuAccessMode flags, uint64_t offset, size_t size) const;
-        bool m_AftermathEnabled = false;
-        AftermathCrashDumpHelper m_AftermathCrashDumpHelper;
     };
 
     class CommandList : public RefCounter<ICommandList>
@@ -1203,6 +1222,9 @@ namespace nvrhi::vulkan
         void clearTextureFloat(ITexture* texture, TextureSubresourceSet subresources, const Color& clearColor) override;
         void clearDepthStencilTexture(ITexture* texture, TextureSubresourceSet subresources, bool clearDepth, float depth, bool clearStencil, uint8_t stencil) override;
         void clearTextureUInt(ITexture* texture, TextureSubresourceSet subresources, uint32_t clearColor) override;
+        void clearSamplerFeedbackTexture(ISamplerFeedbackTexture* texture) override;
+        void decodeSamplerFeedbackTexture(IBuffer* buffer, ISamplerFeedbackTexture* texture, Format format) override;
+        void setSamplerFeedbackTextureState(ISamplerFeedbackTexture* texture, ResourceStates stateBits) override;
 
         void copyTexture(ITexture* dest, const TextureSlice& destSlice, ITexture* src, const TextureSlice& srcSlice) override;
         void copyTexture(IStagingTexture* dest, const TextureSlice& dstSlice, ITexture* src, const TextureSlice& srcSlice) override;
@@ -1239,6 +1261,8 @@ namespace nvrhi::vulkan
         void buildTopLevelAccelStructFromBuffer(rt::IAccelStruct* as, nvrhi::IBuffer* instanceBuffer, uint64_t instanceBufferOffset, size_t numInstances,
             rt::AccelStructBuildFlags buildFlags = rt::AccelStructBuildFlags::None) override;
         void executeMultiIndirectClusterOperation(const rt::cluster::OperationDesc& desc) override;
+
+        void convertCoopVecMatrices(coopvec::ConvertMatrixLayoutDesc const* convertDescs, size_t numDescs) override;
 
         void beginTimerQuery(ITimerQuery* query) override;
         void endTimerQuery(ITimerQuery* query) override;
@@ -1314,6 +1338,7 @@ namespace nvrhi::vulkan
 
         void bindBindingSets(vk::PipelineBindPoint bindPoint, vk::PipelineLayout pipelineLayout, const BindingSetVector& bindings, BindingVector<uint32_t> const& descriptorSetIdxToBindingIdx);
 
+        void beginRenderPass(nvrhi::IFramebuffer* framebuffer);
         void endRenderPass();
 
         void trackResourcesAndBarriers(const GraphicsState& state);

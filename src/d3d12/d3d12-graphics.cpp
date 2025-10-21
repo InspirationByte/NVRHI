@@ -106,6 +106,9 @@ namespace nvrhi::d3d12
         case PrimitiveType::PatchList:
             desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
             break;
+        default:
+            m_Context.error("PrimitiveType unsupported by this device");
+            return nullptr;
         }
 
         desc.DSVFormat = getDxgiFormatMapping(fbinfo.depthFormat).rtvFormat;
@@ -180,14 +183,21 @@ namespace nvrhi::d3d12
         return pipelineState;
     }
 
-    
-    GraphicsPipelineHandle Device::createGraphicsPipeline(const GraphicsPipelineDesc& desc, const FramebufferInfo& fbInfo)
+    GraphicsPipelineHandle Device::createGraphicsPipeline(const GraphicsPipelineDesc& desc, FramebufferInfo const& fbinfo)
     {
         RefCountPtr<RootSignature> pRS = getRootSignature(desc.bindingLayouts, desc.inputLayout != nullptr);
 
-        RefCountPtr<ID3D12PipelineState> pPSO = createPipelineState(desc, pRS, fbInfo);
+        RefCountPtr<ID3D12PipelineState> pPSO = createPipelineState(desc, pRS, fbinfo);
 
-        return createHandleForNativeGraphicsPipeline(pRS, pPSO, desc, fbInfo);
+        return createHandleForNativeGraphicsPipeline(pRS, pPSO, desc, fbinfo);
+    }
+    
+    GraphicsPipelineHandle Device::createGraphicsPipeline(const GraphicsPipelineDesc& desc, IFramebuffer* fb)
+    {
+        if (!fb)
+            return nullptr;
+            
+        return createGraphicsPipeline(desc, fb->getFramebufferInfo());
     }
 
     nvrhi::GraphicsPipelineHandle Device::createHandleForNativeGraphicsPipeline(IRootSignature* rootSignature, ID3D12PipelineState* pipelineState, const GraphicsPipelineDesc& desc, const FramebufferInfo& framebufferInfo)
@@ -416,14 +426,13 @@ namespace nvrhi::d3d12
 
         if (updateShadingRate || updateFramebuffer)
         {
-            auto framebufferDesc = framebuffer->getDesc();
+            const auto& framebufferDesc = framebuffer->getDesc();
             bool shouldEnableVariableRateShading = framebufferDesc.shadingRateAttachment.valid() && state.shadingRateState.enabled;
             bool variableRateShadingCurrentlyEnabled = m_CurrentGraphicsStateValid
                 && m_CurrentGraphicsState.framebuffer->getDesc().shadingRateAttachment.valid() && m_CurrentGraphicsState.shadingRateState.enabled;
 
             if (shouldEnableVariableRateShading)
             {
-                setTextureState(framebufferDesc.shadingRateAttachment.texture, nvrhi::TextureSubresourceSet(0, 1, 0, 1), nvrhi::ResourceStates::ShadingRateSurface);
                 Texture* texture = checked_cast<Texture*>(framebufferDesc.shadingRateAttachment.texture);
                 m_ActiveCommandList->commandList6->RSSetShadingRateImage(texture->resource);
             }
