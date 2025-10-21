@@ -62,7 +62,7 @@ namespace nvrhi::d3d12
         m_HeapType = heapDesc.Type;
         m_StartCpuHandle = m_Heap->GetCPUDescriptorHandleForHeapStart();
         m_Stride = m_Context.device->GetDescriptorHandleIncrementSize(heapDesc.Type);
-        m_AllocatedDescriptors.resize(m_NumDescriptors);
+        m_AllocatedDescriptors.resize((m_NumDescriptors + 31) / 32);
 
         return S_OK;
     }
@@ -116,7 +116,7 @@ namespace nvrhi::d3d12
 
         for (DescriptorIndex index = m_SearchStart; index < m_NumDescriptors; index++)
         {
-            if (m_AllocatedDescriptors[index])
+            if (m_AllocatedDescriptors[index >> 5] & (1 << (index & 31)))
                 freeCount = 0;
             else
                 freeCount += 1;
@@ -142,7 +142,7 @@ namespace nvrhi::d3d12
 
         for (DescriptorIndex index = foundIndex; index < foundIndex + count; index++)
         {
-            m_AllocatedDescriptors[index] = true;
+            m_AllocatedDescriptors[index >> 5] |= (1 << (index & 31));
         }
 
         m_NumAllocatedDescriptors += count;
@@ -172,7 +172,7 @@ namespace nvrhi::d3d12
             }
 #endif
 
-            m_AllocatedDescriptors[index] = false;
+            m_AllocatedDescriptors[index >> 5] &= ~(1 << (index & 31));
         }
 
         m_NumAllocatedDescriptors -= count;

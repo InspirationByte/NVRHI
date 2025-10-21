@@ -155,7 +155,7 @@ namespace nvrhi::d3d12
         D3D12_GPU_DESCRIPTOR_HANDLE m_StartGpuHandleShaderVisible = { 0 };
         uint32_t m_Stride = 0;
         uint32_t m_NumDescriptors = 0;
-        std::vector<bool> m_AllocatedDescriptors;
+        std::vector<uint32_t> m_AllocatedDescriptors;
         DescriptorIndex m_SearchStart = 0;
         uint32_t m_NumAllocatedDescriptors = 0;
         std::mutex m_Mutex;
