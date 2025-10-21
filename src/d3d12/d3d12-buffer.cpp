@@ -52,10 +52,10 @@ namespace nvrhi::d3d12
             m_Context.info(ss.str());
         }
 
-        if (m_ClearUAV != c_InvalidDescriptorIndex)
+        if (m_ClearUAV.metadata != DescriptorAlloc::NO_SPACE)
         {
-            m_Resources.shaderResourceViewHeap.releaseDescriptor(m_ClearUAV);
-            m_ClearUAV = c_InvalidDescriptorIndex;
+            m_Resources.shaderResourceViewHeap.releaseDescriptors(m_ClearUAV);
+            m_ClearUAV = {};
         }
     }
 
@@ -235,17 +235,17 @@ namespace nvrhi::d3d12
         }
     }
 
-    DescriptorIndex Buffer::getClearUAV()
+    DescriptorAlloc Buffer::getClearUAV()
     {
         assert(desc.canHaveUAVs);
 
-        if (m_ClearUAV != c_InvalidDescriptorIndex)
+        if (m_ClearUAV.metadata != DescriptorAlloc::NO_SPACE)
             return m_ClearUAV;
 
         m_ClearUAV = m_Resources.shaderResourceViewHeap.allocateDescriptor();
-        createUAV(m_Resources.shaderResourceViewHeap.getCpuHandle(m_ClearUAV).ptr, Format::R32_UINT,
+        createUAV(m_Resources.shaderResourceViewHeap.getCpuHandle(m_ClearUAV.offset).ptr, Format::R32_UINT,
             EntireBuffer, ResourceType::TypedBuffer_UAV);
-        m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(m_ClearUAV);
+        m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(m_ClearUAV.offset);
         return m_ClearUAV;
     }
 
@@ -558,15 +558,15 @@ namespace nvrhi::d3d12
 
         commitDescriptorHeaps();
 
-        DescriptorIndex clearUAV = b->getClearUAV();
+        DescriptorAlloc clearUAV = b->getClearUAV();
         assert(clearUAV != c_InvalidDescriptorIndex);
 
         m_Instance->referencedResources.push_back(b);
 
         const uint32_t values[4] = { clearValue, clearValue, clearValue, clearValue };
         m_ActiveCommandList->commandList->ClearUnorderedAccessViewUint(
-            m_Resources.shaderResourceViewHeap.getGpuHandle(clearUAV),
-            m_Resources.shaderResourceViewHeap.getCpuHandle(clearUAV),
+            m_Resources.shaderResourceViewHeap.getGpuHandle(clearUAV.offset),
+            m_Resources.shaderResourceViewHeap.getCpuHandle(clearUAV.offset),
             b->resource, values, 0, nullptr);
     }
 

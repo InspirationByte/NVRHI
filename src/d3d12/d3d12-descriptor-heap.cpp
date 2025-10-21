@@ -27,6 +27,7 @@ namespace nvrhi::d3d12
     
     StaticDescriptorHeap::StaticDescriptorHeap(const Context& context)
         : m_Context(context)
+        , m_Allocator(D3D12_MAX_SHADER_VISIBLE_DESCRIPTOR_HEAP_SIZE_TIER_1)
     {
     }
     
@@ -58,11 +59,16 @@ namespace nvrhi::d3d12
             m_StartGpuHandleShaderVisible = m_ShaderVisibleHeap->GetGPUDescriptorHandleForHeapStart();
         }
 
-        m_NumDescriptors = heapDesc.NumDescriptors;
+        m_MaxDescriptorIndex = heapDesc.NumDescriptors;
         m_HeapType = heapDesc.Type;
         m_StartCpuHandle = m_Heap->GetCPUDescriptorHandleForHeapStart();
         m_Stride = m_Context.device->GetDescriptorHandleIncrementSize(heapDesc.Type);
-        m_AllocatedDescriptors.resize(m_NumDescriptors);
+
+        uint32_t const maxSize = (m_HeapType == D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV)
+            ? D3D12_MAX_SHADER_VISIBLE_DESCRIPTOR_HEAP_SIZE_TIER_1 // Not a power of 2!
+            : D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE;
+
+        m_Allocator.reset(maxSize);
 
         return S_OK;
     }
@@ -84,7 +90,7 @@ namespace nvrhi::d3d12
 
     HRESULT StaticDescriptorHeap::Grow(uint32_t minRequiredSize)
     {
-        uint32_t oldSize = m_NumDescriptors;
+        uint32_t oldSize = m_MaxDescriptorIndex;
         uint32_t newSize = nextPowerOf2(minRequiredSize);
 
         bool const isShaderVisible = m_ShaderVisibleHeap != nullptr;
@@ -118,103 +124,61 @@ namespace nvrhi::d3d12
         return S_OK;
     }
 
-    DescriptorIndex StaticDescriptorHeap::allocateDescriptors(uint32_t count)
+    DescriptorAlloc StaticDescriptorHeap::allocateDescriptors(uint32_t count)
     {
         std::lock_guard lockGuard(m_Mutex);
-
-        DescriptorIndex foundIndex = 0;
-        uint32_t freeCount = 0;
-        bool found = false;
-
-        // Find a contiguous range of 'count' indices for which m_AllocatedDescriptors[index] is false
-
-        for (DescriptorIndex index = m_SearchStart; index < m_NumDescriptors; index++)
+        DescriptorAlloc alloc = m_Allocator.allocate(count);
+        if (alloc.metadata == DescriptorAlloc::NO_SPACE)
         {
-            if (m_AllocatedDescriptors[index])
-                freeCount = 0;
-            else
-                freeCount += 1;
-
-            if (freeCount >= count)
-            {
-                foundIndex = index - count + 1;
-                found = true;
-                break;
-            }
+            m_Context.error("Failed to allocate descriptor!");
+            return {};
         }
 
-        if (!found)
+        if (alloc.offset + count > m_MaxDescriptorIndex)
         {
-            foundIndex = m_NumDescriptors;
-
-            if (FAILED(Grow(m_NumDescriptors + count)))
+            if (FAILED(Grow(alloc.offset + count)))
             {
                 m_Context.error("Failed to grow a descriptor heap!");
-                return c_InvalidDescriptorIndex;
+                return {};
             }
         }
-
-        for (DescriptorIndex index = foundIndex; index < foundIndex + count; index++)
-        {
-            m_AllocatedDescriptors[index] = true;
-        }
-
         m_NumAllocatedDescriptors += count;
-
-        m_SearchStart = foundIndex + count;
-        return foundIndex;
+        return alloc;
     }
 
-    DescriptorIndex StaticDescriptorHeap::allocateDescriptor()
+    DescriptorAlloc StaticDescriptorHeap::allocateDescriptor()
     {
         return allocateDescriptors(1);
     }
 
-    void StaticDescriptorHeap::releaseDescriptors(DescriptorIndex baseIndex, uint32_t count)
+    void StaticDescriptorHeap::releaseDescriptors(DescriptorAlloc alloc)
     {
         std::lock_guard lockGuard(m_Mutex);
-
-        if (count == 0)
-            return;
-
-        for (DescriptorIndex index = baseIndex; index < baseIndex + count; index++)
-        {
+        
 #ifdef _DEBUG
-            if (!m_AllocatedDescriptors[index])
-            {
-                m_Context.error("Attempted to release an un-allocated descriptor");
-            }
-#endif
-
-            m_AllocatedDescriptors[index] = false;
+        if (alloc.metadata == Alloc::NO_SPACE)
+        {
+            m_Context.error("Attempted to release an un-allocated descriptor");
         }
-
-        m_NumAllocatedDescriptors -= count;
-
-        if (m_SearchStart > baseIndex)
-            m_SearchStart = baseIndex;
+#endif
+        m_Allocator.free(alloc);
     }
 
-    void StaticDescriptorHeap::releaseDescriptor(DescriptorIndex index)
-    {
-        releaseDescriptors(index, 1);
-    }
-
-    D3D12_CPU_DESCRIPTOR_HANDLE StaticDescriptorHeap::getCpuHandle(DescriptorIndex index)
+    D3D12_CPU_DESCRIPTOR_HANDLE StaticDescriptorHeap::getCpuHandle(uint32_t index)
     {
         D3D12_CPU_DESCRIPTOR_HANDLE handle = m_StartCpuHandle;
         handle.ptr += index * m_Stride;
         return handle;
     }
 
-    D3D12_CPU_DESCRIPTOR_HANDLE StaticDescriptorHeap::getCpuHandleShaderVisible(DescriptorIndex index)
+    D3D12_CPU_DESCRIPTOR_HANDLE StaticDescriptorHeap::getCpuHandleShaderVisible(uint32_t index)
     {
         D3D12_CPU_DESCRIPTOR_HANDLE handle = m_StartCpuHandleShaderVisible;
         handle.ptr += index * m_Stride;
         return handle;
     }
 
-    D3D12_GPU_DESCRIPTOR_HANDLE StaticDescriptorHeap::getGpuHandle(DescriptorIndex index)
+    D3D12_GPU_DESCRIPTOR_HANDLE StaticDescriptorHeap::getGpuHandle(uint32_t index)
     {
         D3D12_GPU_DESCRIPTOR_HANDLE handle = m_StartGpuHandleShaderVisible;
         handle.ptr += index * m_Stride;
@@ -231,7 +195,7 @@ namespace nvrhi::d3d12
         return m_ShaderVisibleHeap;
     }
 
-    void StaticDescriptorHeap::copyToShaderVisibleHeap(DescriptorIndex index, uint32_t count)
+    void StaticDescriptorHeap::copyToShaderVisibleHeap(uint32_t index, uint32_t count)
     {
         m_Context.device->CopyDescriptorsSimple(count, getCpuHandleShaderVisible(index), getCpuHandle(index), m_HeapType);
     }

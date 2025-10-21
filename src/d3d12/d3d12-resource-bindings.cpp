@@ -95,7 +95,7 @@ namespace nvrhi::d3d12
 
         if (layout->descriptorTableSizeSamplers > 0)
         {
-            DescriptorIndex descriptorTableBaseIndex = m_Resources.samplerHeap.allocateDescriptors(layout->descriptorTableSizeSamplers);
+            DescriptorAlloc descriptorTableBaseIndex = m_Resources.samplerHeap.allocateDescriptors(layout->descriptorTableSizeSamplers);
             descriptorTableSamplers = descriptorTableBaseIndex;
             rootParameterIndexSamplers = layout->rootParameterSamplers;
             descriptorTableValidSamplers = true;
@@ -107,7 +107,7 @@ namespace nvrhi::d3d12
                     uint32_t slot = range.BaseShaderRegister + itemInRange;
                     bool found = false;
                     D3D12_CPU_DESCRIPTOR_HANDLE descriptorHandle = m_Resources.samplerHeap.getCpuHandle(
-                        descriptorTableBaseIndex + range.OffsetInDescriptorsFromTableStart + itemInRange);
+                        descriptorTableBaseIndex.offset + range.OffsetInDescriptorsFromTableStart + itemInRange);
 
                     for (const auto& binding : desc.bindings)
                     {
@@ -131,12 +131,12 @@ namespace nvrhi::d3d12
                 }
             }
 
-            m_Resources.samplerHeap.copyToShaderVisibleHeap(descriptorTableBaseIndex, layout->descriptorTableSizeSamplers);
+            m_Resources.samplerHeap.copyToShaderVisibleHeap(descriptorTableBaseIndex.offset, layout->descriptorTableSizeSamplers);
         }
 
         if (layout->descriptorTableSizeSRVetc > 0)
         {
-            DescriptorIndex descriptorTableBaseIndex = m_Resources.shaderResourceViewHeap.allocateDescriptors(layout->descriptorTableSizeSRVetc);
+            DescriptorAlloc descriptorTableBaseIndex = m_Resources.shaderResourceViewHeap.allocateDescriptors(layout->descriptorTableSizeSRVetc);
             descriptorTableSRVetc = descriptorTableBaseIndex;
             rootParameterIndexSRVetc = layout->rootParameterSRVetc;
             descriptorTableValidSRVetc = true;
@@ -148,7 +148,7 @@ namespace nvrhi::d3d12
                     uint32_t slot = range.BaseShaderRegister + itemInRange;
                     bool found = false;
                     D3D12_CPU_DESCRIPTOR_HANDLE descriptorHandle = m_Resources.shaderResourceViewHeap.getCpuHandle(
-                        descriptorTableBaseIndex + range.OffsetInDescriptorsFromTableStart + itemInRange);
+                        descriptorTableBaseIndex.offset + range.OffsetInDescriptorsFromTableStart + itemInRange);
 
                     IResource* pResource = nullptr;
 
@@ -336,7 +336,7 @@ namespace nvrhi::d3d12
                 }
             }
 
-            m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorTableBaseIndex, layout->descriptorTableSizeSRVetc);
+            m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorTableBaseIndex.offset, layout->descriptorTableSizeSRVetc);
         }
     }
 
@@ -371,21 +371,21 @@ namespace nvrhi::d3d12
 
         DescriptorTable* ret = new DescriptorTable(m_Resources);
         ret->capacity = 0;
-        ret->firstDescriptor = 0;
+        ret->firstDescriptor = {};
         
         return DescriptorTableHandle::Create(ret);
     }
 
     BindingSet::~BindingSet()
     {
-        m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTableSRVetc, layout->descriptorTableSizeSRVetc);
+        m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTableSRVetc);
     
-        m_Resources.samplerHeap.releaseDescriptors(descriptorTableSamplers, layout->descriptorTableSizeSamplers);
+        m_Resources.samplerHeap.releaseDescriptors(descriptorTableSamplers);
     }
 
     DescriptorTable::~DescriptorTable()
     {
-        m_Resources.shaderResourceViewHeap.releaseDescriptors(firstDescriptor, capacity);
+        m_Resources.shaderResourceViewHeap.releaseDescriptors(firstDescriptor);
     }
 
     BindingLayout::BindingLayout(const BindingLayoutDesc& _desc)
@@ -807,7 +807,7 @@ namespace nvrhi::d3d12
         if (binding.slot >= descriptorTable->capacity)
             return false;
 
-        D3D12_CPU_DESCRIPTOR_HANDLE descriptorHandle = m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorTable->firstDescriptor + binding.slot);
+        D3D12_CPU_DESCRIPTOR_HANDLE descriptorHandle = m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorTable->firstDescriptor.offset + binding.slot);
 
         switch (binding.type)
         {
@@ -866,7 +866,7 @@ namespace nvrhi::d3d12
             return false;
         }
 
-        m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorTable->firstDescriptor + binding.slot, 1);
+        m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorTable->firstDescriptor.offset + binding.slot, 1);
         return true;
     }
 
@@ -877,17 +877,17 @@ namespace nvrhi::d3d12
         if (newSize == descriptorTable->capacity)
             return;
 
-        if (newSize < descriptorTable->capacity)
-        {
-            m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTable->firstDescriptor + newSize, descriptorTable->capacity - newSize);
-            descriptorTable->capacity = newSize;
-            return;
-        }
+        //if (newSize < descriptorTable->capacity)
+        //{
+        //    m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTable->firstDescriptor + newSize, descriptorTable->capacity.offset - newSize);
+        //    descriptorTable->capacity = newSize;
+        //    return;
+        //}
 
-        uint32_t originalFirst = descriptorTable->firstDescriptor;
+        DescriptorAlloc originalFirst = descriptorTable->firstDescriptor;
         if (!keepContents && descriptorTable->capacity > 0)
         {
-            m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTable->firstDescriptor, descriptorTable->capacity);
+            m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTable->firstDescriptor);
         }
 
         descriptorTable->firstDescriptor = m_Resources.shaderResourceViewHeap.allocateDescriptors(newSize);
@@ -895,16 +895,16 @@ namespace nvrhi::d3d12
         if (keepContents && descriptorTable->capacity > 0)
         {
             m_Context.device->CopyDescriptorsSimple(descriptorTable->capacity,
-                m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorTable->firstDescriptor),
-                m_Resources.shaderResourceViewHeap.getCpuHandle(originalFirst),
+                m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorTable->firstDescriptor.offset),
+                m_Resources.shaderResourceViewHeap.getCpuHandle(originalFirst.offset),
                 D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
             m_Context.device->CopyDescriptorsSimple(descriptorTable->capacity,
-                m_Resources.shaderResourceViewHeap.getCpuHandleShaderVisible(descriptorTable->firstDescriptor),
-                m_Resources.shaderResourceViewHeap.getCpuHandle(originalFirst),
+                m_Resources.shaderResourceViewHeap.getCpuHandleShaderVisible(descriptorTable->firstDescriptor.offset),
+                m_Resources.shaderResourceViewHeap.getCpuHandle(originalFirst.offset),
                 D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
 
-            m_Resources.shaderResourceViewHeap.releaseDescriptors(originalFirst, descriptorTable->capacity);
+            m_Resources.shaderResourceViewHeap.releaseDescriptors(originalFirst);
         }
 
         descriptorTable->capacity = newSize;
@@ -989,14 +989,14 @@ namespace nvrhi::d3d12
                         {
                             m_ActiveCommandList->commandList->SetComputeRootDescriptorTable(
                                 rootParameterOffset + bindingSet->rootParameterIndexSamplers,
-                                m_Resources.samplerHeap.getGpuHandle(bindingSet->descriptorTableSamplers));
+                                m_Resources.samplerHeap.getGpuHandle(bindingSet->descriptorTableSamplers.offset));
                         }
 
                         if (bindingSet->descriptorTableValidSRVetc)
                         {
                             m_ActiveCommandList->commandList->SetComputeRootDescriptorTable(
                                 rootParameterOffset + bindingSet->rootParameterIndexSRVetc,
-                                m_Resources.shaderResourceViewHeap.getGpuHandle(bindingSet->descriptorTableSRVetc));
+                                m_Resources.shaderResourceViewHeap.getGpuHandle(bindingSet->descriptorTableSRVetc.offset));
                         }
 
                         if (bindingSet->desc.trackLiveness)
@@ -1012,7 +1012,7 @@ namespace nvrhi::d3d12
                 {
                     DescriptorTable* descriptorTable = checked_cast<DescriptorTable*>(_bindingSet);
 
-                    m_ActiveCommandList->commandList->SetComputeRootDescriptorTable(rootParameterOffset, m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorTable->firstDescriptor));
+                    m_ActiveCommandList->commandList->SetComputeRootDescriptorTable(rootParameterOffset, m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorTable->firstDescriptor.offset));
                 }
             }
 
@@ -1115,14 +1115,14 @@ namespace nvrhi::d3d12
                         {
                             m_ActiveCommandList->commandList->SetGraphicsRootDescriptorTable(
                                 rootParameterOffset + bindingSet->rootParameterIndexSamplers,
-                                m_Resources.samplerHeap.getGpuHandle(bindingSet->descriptorTableSamplers));
+                                m_Resources.samplerHeap.getGpuHandle(bindingSet->descriptorTableSamplers.offset));
                         }
 
                         if (bindingSet->descriptorTableValidSRVetc)
                         {
                             m_ActiveCommandList->commandList->SetGraphicsRootDescriptorTable(
                                 rootParameterOffset + bindingSet->rootParameterIndexSRVetc,
-                                m_Resources.shaderResourceViewHeap.getGpuHandle(bindingSet->descriptorTableSRVetc));
+                                m_Resources.shaderResourceViewHeap.getGpuHandle(bindingSet->descriptorTableSRVetc.offset));
                         }
 
                         if (bindingSet->desc.trackLiveness)
@@ -1138,7 +1138,7 @@ namespace nvrhi::d3d12
                 {
                     DescriptorTable* descriptorTable = checked_cast<DescriptorTable*>(_bindingSet);
 
-                    m_ActiveCommandList->commandList->SetGraphicsRootDescriptorTable(rootParameterOffset, m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorTable->firstDescriptor));
+                    m_ActiveCommandList->commandList->SetGraphicsRootDescriptorTable(rootParameterOffset, m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorTable->firstDescriptor.offset));
                 }
             }
 

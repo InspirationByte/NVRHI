@@ -241,9 +241,9 @@ namespace nvrhi::d3d12
             assert(texture->desc.width == fb->rtWidth);
             assert(texture->desc.height == fb->rtHeight);
 
-            DescriptorIndex index = m_Resources.renderTargetViewHeap.allocateDescriptor();
+            DescriptorAlloc index = m_Resources.renderTargetViewHeap.allocateDescriptor();
 
-            const D3D12_CPU_DESCRIPTOR_HANDLE descriptorHandle = m_Resources.renderTargetViewHeap.getCpuHandle(index);
+            const D3D12_CPU_DESCRIPTOR_HANDLE descriptorHandle = m_Resources.renderTargetViewHeap.getCpuHandle(index.offset);
             texture->createRTV(descriptorHandle.ptr, attachment.format, attachment.subresources);
 
             fb->RTVs.push_back(index);
@@ -256,9 +256,9 @@ namespace nvrhi::d3d12
             assert(texture->desc.width == fb->rtWidth);
             assert(texture->desc.height == fb->rtHeight);
 
-            DescriptorIndex index = m_Resources.depthStencilViewHeap.allocateDescriptor();
+            DescriptorAlloc index = m_Resources.depthStencilViewHeap.allocateDescriptor();
 
-            const D3D12_CPU_DESCRIPTOR_HANDLE descriptorHandle = m_Resources.depthStencilViewHeap.getCpuHandle(index);
+            const D3D12_CPU_DESCRIPTOR_HANDLE descriptorHandle = m_Resources.depthStencilViewHeap.getCpuHandle(index.offset);
             texture->createDSV(descriptorHandle.ptr, desc.depthAttachment.subresources, desc.depthAttachment.isReadOnly);
 
             fb->DSV = index;
@@ -270,11 +270,11 @@ namespace nvrhi::d3d12
 
     Framebuffer::~Framebuffer()
     {
-        for (DescriptorIndex RTV : RTVs)
-            m_Resources.renderTargetViewHeap.releaseDescriptor(RTV);
+        for (DescriptorAlloc RTV : RTVs)
+            m_Resources.renderTargetViewHeap.releaseDescriptors(RTV);
 
-        if (DSV != c_InvalidDescriptorIndex)
-            m_Resources.depthStencilViewHeap.releaseDescriptor(DSV);
+        if (DSV.metadata != DescriptorAlloc::NO_SPACE)
+            m_Resources.depthStencilViewHeap.releaseDescriptors(DSV);
     }
     
     void CommandList::bindFramebuffer(Framebuffer *fb)
@@ -287,12 +287,12 @@ namespace nvrhi::d3d12
         static_vector<D3D12_CPU_DESCRIPTOR_HANDLE, 16> RTVs;
         for (uint32_t rtIndex = 0; rtIndex < fb->RTVs.size(); rtIndex++)
         {
-            RTVs.push_back(m_Resources.renderTargetViewHeap.getCpuHandle(fb->RTVs[rtIndex]));
+            RTVs.push_back(m_Resources.renderTargetViewHeap.getCpuHandle(fb->RTVs[rtIndex].offset));
         }
 
         D3D12_CPU_DESCRIPTOR_HANDLE DSV = {};
         if (fb->desc.depthAttachment.valid())
-            DSV = m_Resources.depthStencilViewHeap.getCpuHandle(fb->DSV);
+            DSV = m_Resources.depthStencilViewHeap.getCpuHandle(fb->DSV.offset);
 
         m_ActiveCommandList->commandList->OMSetRenderTargets(UINT(RTVs.size()), RTVs.data(), false, fb->desc.depthAttachment.valid() ? &DSV : nullptr);
     }
