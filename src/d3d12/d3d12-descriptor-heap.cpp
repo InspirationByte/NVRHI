@@ -161,6 +161,7 @@ namespace nvrhi::d3d12
             m_Context.error("Attempted to release an un-allocated descriptor");
         }
 #endif
+        m_NumAllocatedDescriptors += m_Allocator.allocationSize(alloc);
         m_Allocator.free(alloc);
     }
 
