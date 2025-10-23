@@ -128,7 +128,7 @@ namespace nvrhi::d3d12
             m_Instance->referencedResources.push_back(pso);
         }
 
-        setComputeBindings(state.bindings, bindingUpdateMask, state.indirectParams, updateIndirectParams, pso->rootSignature);
+        setBindings(true, state.bindings, bindingUpdateMask, state.indirectParams, updateIndirectParams, pso->rootSignature);
 
         unbindShadingRateState();
         

@@ -910,11 +910,18 @@ namespace nvrhi::d3d12
         descriptorTable->capacity = newSize;
     }
 
-    void CommandList::setComputeBindings(
-        const BindingSetVector& bindings, uint32_t bindingUpdateMask,
-        IBuffer* indirectParams, bool updateIndirectParams,
-        const RootSignature* rootSignature)
+    void CommandList::setBindings(bool isCompute, const BindingSetVector& bindings, uint32_t bindingUpdateMask, IBuffer* indirectParams, bool updateIndirectParams, const RootSignature* rootSignature)
     {
+        const auto SetRootDescriptorTable = isCompute ?
+            &ID3D12GraphicsCommandList::SetComputeRootDescriptorTable :
+            &ID3D12GraphicsCommandList::SetGraphicsRootDescriptorTable;
+
+        const auto SetRootConstantBufferView = isCompute ?
+            &ID3D12GraphicsCommandList::SetComputeRootConstantBufferView :
+            &ID3D12GraphicsCommandList::SetGraphicsRootConstantBufferView;
+
+        auto& currentVolatileCBs = isCompute ? m_CurrentComputeVolatileCBs : m_CurrentGraphicsVolatileCBs;
+
         if (bindingUpdateMask)
         {
             static_vector<VolatileConstantBufferBinding, c_MaxVolatileConstantBuffers> newVolatileCBs;
@@ -961,9 +968,9 @@ namespace nvrhi::d3d12
                                     continue;
                                 }
 
-                                if (updateThisSet || volatileData != m_CurrentComputeVolatileCBs[newVolatileCBs.size()].address)
+                                if (updateThisSet || volatileData != currentVolatileCBs[newVolatileCBs.size()].address)
                                 {
-                                    m_ActiveCommandList->commandList->SetComputeRootConstantBufferView(rootParameterIndex, volatileData);
+                                    (m_ActiveCommandList->commandList->*SetRootConstantBufferView)(rootParameterIndex, volatileData);
                                 }
 
                                 newVolatileCBs.push_back(VolatileConstantBufferBinding{ rootParameterIndex, buffer, volatileData });
@@ -972,14 +979,14 @@ namespace nvrhi::d3d12
                             {
                                 assert(buffer->gpuVA != 0);
 
-                                m_ActiveCommandList->commandList->SetComputeRootConstantBufferView(rootParameterIndex, buffer->gpuVA);
+                                (m_ActiveCommandList->commandList->*SetRootConstantBufferView)(rootParameterIndex, buffer->gpuVA);
                             }
                         }
                         else if (updateThisSet)
                         {
                             // This can only happen as a result of an improperly built binding set. 
                             // Such binding set should fail to create.
-                            m_ActiveCommandList->commandList->SetComputeRootConstantBufferView(rootParameterIndex, 0);
+                            (m_ActiveCommandList->commandList->*SetRootConstantBufferView)(rootParameterIndex, 0);
                         }
                     }
 
@@ -987,14 +994,14 @@ namespace nvrhi::d3d12
                     {
                         if (bindingSet->descriptorTableValidSamplers)
                         {
-                            m_ActiveCommandList->commandList->SetComputeRootDescriptorTable(
+                            (m_ActiveCommandList->commandList->*SetRootDescriptorTable)(
                                 rootParameterOffset + bindingSet->rootParameterIndexSamplers,
                                 m_Resources.samplerHeap.getGpuHandle(bindingSet->descriptorTableSamplers.offset));
                         }
 
                         if (bindingSet->descriptorTableValidSRVetc)
                         {
-                            m_ActiveCommandList->commandList->SetComputeRootDescriptorTable(
+                            (m_ActiveCommandList->commandList->*SetRootDescriptorTable)(
                                 rootParameterOffset + bindingSet->rootParameterIndexSRVetc,
                                 m_Resources.shaderResourceViewHeap.getGpuHandle(bindingSet->descriptorTableSRVetc.offset));
                         }
@@ -1012,11 +1019,11 @@ namespace nvrhi::d3d12
                 {
                     DescriptorTable* descriptorTable = checked_cast<DescriptorTable*>(_bindingSet);
 
-                    m_ActiveCommandList->commandList->SetComputeRootDescriptorTable(rootParameterOffset, m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorTable->firstDescriptor.offset));
+                    (m_ActiveCommandList->commandList->*SetRootDescriptorTable)(rootParameterOffset, m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorTable->firstDescriptor.offset));
                 }
             }
 
-            m_CurrentComputeVolatileCBs = newVolatileCBs;
+            currentVolatileCBs = newVolatileCBs;
         }
 
         if (indirectParams && updateIndirectParams)
@@ -1035,132 +1042,4 @@ namespace nvrhi::d3d12
             m_AnyVolatileBufferWrites = false;
         }
     }
-
-    void CommandList::setGraphicsBindings(
-        const BindingSetVector& bindings, uint32_t bindingUpdateMask,
-        IBuffer* indirectParams, bool updateIndirectParams,
-        const RootSignature* rootSignature)
-    {
-        if (bindingUpdateMask)
-        {
-            static_vector<VolatileConstantBufferBinding, c_MaxVolatileConstantBuffers> newVolatileCBs;
-
-            for (uint32_t bindingSetIndex = 0; bindingSetIndex < uint32_t(bindings.size()); bindingSetIndex++)
-            {
-                IBindingSet* _bindingSet = bindings[bindingSetIndex];
-
-                if (!_bindingSet)
-                    continue;
-
-                const bool updateThisSet = (bindingUpdateMask & (1 << bindingSetIndex)) != 0;
-
-                const std::pair<BindingLayoutHandle, RootParameterIndex>& layoutAndOffset = rootSignature->pipelineLayouts[bindingSetIndex];
-                RootParameterIndex rootParameterOffset = layoutAndOffset.second;
-
-                if (_bindingSet->getDesc())
-                {
-                    assert(layoutAndOffset.first == _bindingSet->getLayout()); // validation layer handles this
-
-                    BindingSet* bindingSet = checked_cast<BindingSet*>(_bindingSet);
-
-                    // Bind the volatile constant buffers
-                    for (size_t volatileCbIndex = 0; volatileCbIndex < bindingSet->rootParametersVolatileCB.size(); volatileCbIndex++)
-                    {
-                        const auto& parameter = bindingSet->rootParametersVolatileCB[volatileCbIndex];
-                        RootParameterIndex rootParameterIndex = rootParameterOffset + parameter.first;
-
-                        if (parameter.second)
-                        {
-                            Buffer* buffer = checked_cast<Buffer*>(parameter.second);
-
-                            if (buffer->desc.isVolatile)
-                            {
-                                const D3D12_GPU_VIRTUAL_ADDRESS volatileData = m_VolatileConstantBufferAddresses[buffer];
-
-                                if (!volatileData)
-                                {
-                                    std::stringstream ss;
-                                    ss << "Attempted use of a volatile constant buffer " << utils::DebugNameToString(buffer->desc.debugName)
-                                        << " before it was written into";
-                                    m_Context.error(ss.str());
-
-                                    continue;
-                                }
-
-                                if (updateThisSet || volatileData != m_CurrentGraphicsVolatileCBs[newVolatileCBs.size()].address)
-                                {
-                                    m_ActiveCommandList->commandList->SetGraphicsRootConstantBufferView(rootParameterIndex, volatileData);
-                                }
-
-                                newVolatileCBs.push_back(VolatileConstantBufferBinding{ rootParameterIndex, buffer, volatileData });
-                            }
-                            else if (updateThisSet)
-                            {
-                                assert(buffer->gpuVA != 0);
-
-                                m_ActiveCommandList->commandList->SetGraphicsRootConstantBufferView(rootParameterIndex, buffer->gpuVA);
-                            }
-                        }
-                        else if (updateThisSet)
-                        {
-                            // This can only happen as a result of an improperly built binding set. 
-                            // Such binding set should fail to create.
-                            m_ActiveCommandList->commandList->SetGraphicsRootConstantBufferView(rootParameterIndex, 0);
-                        }
-                    }
-
-                    if (updateThisSet)
-                    {
-                        if (bindingSet->descriptorTableValidSamplers)
-                        {
-                            m_ActiveCommandList->commandList->SetGraphicsRootDescriptorTable(
-                                rootParameterOffset + bindingSet->rootParameterIndexSamplers,
-                                m_Resources.samplerHeap.getGpuHandle(bindingSet->descriptorTableSamplers.offset));
-                        }
-
-                        if (bindingSet->descriptorTableValidSRVetc)
-                        {
-                            m_ActiveCommandList->commandList->SetGraphicsRootDescriptorTable(
-                                rootParameterOffset + bindingSet->rootParameterIndexSRVetc,
-                                m_Resources.shaderResourceViewHeap.getGpuHandle(bindingSet->descriptorTableSRVetc.offset));
-                        }
-
-                        if (bindingSet->desc.trackLiveness)
-                            m_Instance->referencedResources.push_back(bindingSet);
-                    }
-
-                    if (m_EnableAutomaticBarriers && (updateThisSet || bindingSet->hasUavBindings)) // UAV bindings may place UAV barriers on the same binding set
-                    {
-                        setResourceStatesForBindingSet(bindingSet);
-                    }
-                }
-                else if (rootParameterOffset != c_InvalidRootParameterIndex)
-                {
-                    DescriptorTable* descriptorTable = checked_cast<DescriptorTable*>(_bindingSet);
-
-                    m_ActiveCommandList->commandList->SetGraphicsRootDescriptorTable(rootParameterOffset, m_Resources.shaderResourceViewHeap.getGpuHandle(descriptorTable->firstDescriptor.offset));
-                }
-            }
-
-            m_CurrentGraphicsVolatileCBs = newVolatileCBs;
-        }
-
-        if (indirectParams && updateIndirectParams)
-        {
-            if (m_EnableAutomaticBarriers)
-            {
-                requireBufferState(indirectParams, ResourceStates::IndirectArgument);
-            }
-            m_Instance->referencedResources.push_back(indirectParams);
-        }
-
-        uint32_t bindingMask = (1 << uint32_t(bindings.size())) - 1;
-        if ((bindingUpdateMask & bindingMask) == bindingMask)
-        {
-            // Only reset this flag when this function has gone over all the binging sets
-            m_AnyVolatileBufferWrites = false;
-        }
-    }
-
-
 } // namespace nvrhi::d3d12
