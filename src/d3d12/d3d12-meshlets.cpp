@@ -273,7 +273,7 @@ namespace nvrhi::d3d12
             m_Instance->referencedResources.push_back(framebuffer);
         }
 
-        setGraphicsBindings(state.bindings, bindingUpdateMask, state.indirectParams, updateIndirectParams, pso->rootSignature);
+        setBindings(false, state.bindings, bindingUpdateMask, state.indirectParams, updateIndirectParams, pso->rootSignature);
         
         commitBarriers();
 
