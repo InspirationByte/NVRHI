@@ -2512,6 +2512,7 @@ namespace nvrhi
     struct GraphicsPipelineDesc
     {
         PrimitiveType primType = PrimitiveType::TriangleList;
+        Format stripIndexFormat = Format::UNKNOWN;
         uint32_t patchControlPoints = 0;
         InputLayoutHandle inputLayout;
 
@@ -2527,6 +2528,7 @@ namespace nvrhi
         BindingLayoutVector bindingLayouts;
         
         GraphicsPipelineDesc& setPrimType(PrimitiveType value) { primType = value; return *this; }
+        GraphicsPipelineDesc& setStripIndexFormat(Format value) { stripIndexFormat = value; return *this; }
         GraphicsPipelineDesc& setPatchControlPoints(uint32_t value) { patchControlPoints = value; return *this; }
         GraphicsPipelineDesc& setInputLayout(IInputLayout* value) { inputLayout = value; return *this; }
         GraphicsPipelineDesc& setVertexShader(IShader* value) { VS = value; return *this; }
