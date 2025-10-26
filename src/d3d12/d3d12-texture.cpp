@@ -538,6 +538,7 @@ namespace nvrhi::d3d12
         bufferDesc.structStride = 0;
         bufferDesc.debugName = d.debugName;
         bufferDesc.cpuAccess = cpuAccess;
+        bufferDesc.initialState = d.initialState;
 
         BufferHandle buffer = createBuffer(bufferDesc);
         ret->buffer = checked_cast<Buffer*>(buffer.Get());
