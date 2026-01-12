@@ -535,7 +535,7 @@ namespace nvrhi::vulkan
 
         if (m_EnableAutomaticBarriers)
         {
-            trackResourcesAndBarriers(state);
+            insertGraphicsResourceBarriers(state);
         }
 
         bool anyBarriers = this->anyBarriers();

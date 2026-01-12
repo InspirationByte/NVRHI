@@ -92,6 +92,7 @@ namespace nvrhi::vulkan
             { VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME, &m_Context.extensions.NV_cluster_acceleration_structure },
             { VK_EXT_MUTABLE_DESCRIPTOR_TYPE_EXTENSION_NAME, &m_Context.extensions.EXT_mutable_descriptor_type },
             { VK_NV_COOPERATIVE_VECTOR_EXTENSION_NAME, &m_Context.extensions.NV_cooperative_vector },
+            { VK_NV_RAY_TRACING_LINEAR_SWEPT_SPHERES_EXTENSION_NAME, &m_Context.extensions.NV_ray_tracing_linear_swept_spheres },
 #if NVRHI_WITH_AFTERMATH
             { VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME, &m_Context.extensions.NV_device_diagnostic_checkpoints },
             { VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME, &m_Context.extensions.NV_device_diagnostics_config }
@@ -220,6 +221,13 @@ namespace nvrhi::vulkan
         {
             vk::PhysicalDeviceFeatures2 deviceFeatures2;
             deviceFeatures2.setPNext(&m_Context.coopVecFeatures);
+            m_Context.physicalDevice.getFeatures2(&deviceFeatures2);
+        }
+
+        if (m_Context.extensions.NV_ray_tracing_linear_swept_spheres)
+        {
+            vk::PhysicalDeviceFeatures2 deviceFeatures2;
+            deviceFeatures2.setPNext(&m_Context.linearSweptSpheresFeatures);
             m_Context.physicalDevice.getFeatures2(&deviceFeatures2);
         }
 #ifdef NVRHI_WITH_RTXMU
@@ -409,6 +417,10 @@ namespace nvrhi::vulkan
             return m_Context.extensions.NV_cooperative_vector && m_Context.coopVecFeatures.cooperativeVector;
         case Feature::CooperativeVectorTraining:
             return m_Context.extensions.NV_cooperative_vector && m_Context.coopVecFeatures.cooperativeVectorTraining;
+        case Feature::Spheres:
+            return m_Context.extensions.NV_ray_tracing_linear_swept_spheres && m_Context.linearSweptSpheresFeatures.spheres;
+        case Feature::LinearSweptSpheres:
+            return m_Context.extensions.NV_ray_tracing_linear_swept_spheres && m_Context.linearSweptSpheresFeatures.linearSweptSpheres;
         default:
             return false;
         }

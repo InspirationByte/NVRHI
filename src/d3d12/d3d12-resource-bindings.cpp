@@ -956,7 +956,7 @@ namespace nvrhi::d3d12
 
                             if (buffer->desc.isVolatile)
                             {
-                                D3D12_GPU_VIRTUAL_ADDRESS volatileData = m_VolatileConstantBufferAddresses[buffer];
+                                const D3D12_GPU_VIRTUAL_ADDRESS volatileData = m_VolatileConstantBufferAddresses[buffer];
 
                                 if (!volatileData)
                                 {
@@ -1010,7 +1010,7 @@ namespace nvrhi::d3d12
                             m_Instance->referencedResources.push_back(bindingSet);
                     }
 
-                    if (m_EnableAutomaticBarriers && (updateThisSet || bindingSet->hasUavBindings)) // UAV bindings may place UAV barriers on the same binding set
+                    if (m_EnableAutomaticBarriers && (m_BindingStatesDirty || updateThisSet || bindingSet->hasUavBindings)) // UAV bindings may place UAV barriers on the same binding set
                     {
                         setResourceStatesForBindingSet(bindingSet);
                     }

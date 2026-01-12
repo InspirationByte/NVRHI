@@ -341,7 +341,7 @@ namespace nvrhi::vulkan
             vk::ImageLayout::eUndefined },
     };
 
-    ResourceStateMappingInternal convertResourceStateInternal(ResourceStates state)
+    ResourceStateMappingInternal convertResourceStateInternal(ResourceStates state, bool isImage)
     {
         ResourceStateMappingInternal result = {};
 
@@ -359,13 +359,23 @@ namespace nvrhi::vulkan
                 const ResourceStateMappingInternal& mapping = g_ResourceStateMap[bitIndex];
 
                 assert(uint32_t(mapping.nvrhiState) == bit);
-                assert(result.imageLayout == vk::ImageLayout::eUndefined || mapping.imageLayout == vk::ImageLayout::eUndefined || result.imageLayout == mapping.imageLayout);
+                if (isImage)
+                {
+                    // If we're converting the state for an image, make sure that the requested state bits
+                    // do not translate to different image layouts, which would be impossible to combine.
+                    // For buffers, the image layout doesn't matter.
+                    assert(result.imageLayout == vk::ImageLayout::eUndefined
+                        || mapping.imageLayout == vk::ImageLayout::eUndefined
+                        || result.imageLayout == mapping.imageLayout);
+                }
 
                 result.nvrhiState = ResourceStates(result.nvrhiState | mapping.nvrhiState);
                 result.accessMask |= mapping.accessMask;
                 result.stageFlags |= mapping.stageFlags;
-                if (mapping.imageLayout != vk::ImageLayout::eUndefined)
+                if (isImage && mapping.imageLayout != vk::ImageLayout::eUndefined)
+                {
                     result.imageLayout = mapping.imageLayout;
+                }
 
                 stateTmp &= ~bit;
             }
@@ -378,15 +388,15 @@ namespace nvrhi::vulkan
         return result;
     }
 
-    ResourceStateMapping convertResourceState(ResourceStates state)
+    ResourceStateMapping convertResourceState(ResourceStates state, bool isImage)
     {
-        const ResourceStateMappingInternal mapping = convertResourceStateInternal(state);
+        const ResourceStateMappingInternal mapping = convertResourceStateInternal(state, isImage);
         return mapping.AsResourceStateMapping();
     }
 
-    ResourceStateMapping2 convertResourceState2(ResourceStates state)
+    ResourceStateMapping2 convertResourceState2(ResourceStates state, bool isImage)
     {
-        const ResourceStateMappingInternal mapping = convertResourceStateInternal(state);
+        const ResourceStateMappingInternal mapping = convertResourceStateInternal(state, isImage);
         return mapping.AsResourceStateMapping2();
     }
 
