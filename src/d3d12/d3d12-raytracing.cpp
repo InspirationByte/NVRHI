@@ -1557,14 +1557,14 @@ namespace nvrhi::d3d12
                 {
                     auto pTable = reinterpret_cast<D3D12_GPU_DESCRIPTOR_HANDLE*>(cpuVA
                         + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES + layout->rootParameterSamplers * sizeof(D3D12_GPU_DESCRIPTOR_HANDLE));
-                    *pTable = resources.samplerHeap.getGpuHandle(bindingSet->descriptorTableSamplers);
+                    *pTable = resources.samplerHeap.getGpuHandle(bindingSet->descriptorTableSamplers.offset);
                 }
 
                 if (layout->descriptorTableSizeSRVetc > 0)
                 {
                     auto pTable = reinterpret_cast<D3D12_GPU_DESCRIPTOR_HANDLE*>(cpuVA
                         + D3D12_SHADER_IDENTIFIER_SIZE_IN_BYTES + layout->rootParameterSRVetc * sizeof(D3D12_GPU_DESCRIPTOR_HANDLE));
-                    *pTable = resources.shaderResourceViewHeap.getGpuHandle(bindingSet->descriptorTableSRVetc);
+                    *pTable = resources.shaderResourceViewHeap.getGpuHandle(bindingSet->descriptorTableSRVetc.offset);
                 }
 
                 if (!layout->rootParametersVolatileCB.empty())
