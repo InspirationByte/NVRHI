@@ -181,7 +181,21 @@ namespace nvrhi::vulkan
             .setBindingCount(uint32_t(vulkanLayoutBindings.size()))
             .setPBindings(vulkanLayoutBindings.data());
 
-        std::vector<vk::DescriptorBindingFlags> bindFlag(vulkanLayoutBindings.size(), vk::DescriptorBindingFlagBits::ePartiallyBound);
+        // Bindless descriptor tables are written from the CPU while previous frames
+        // that bind them are still executing - that is the D3D12 descriptor-heap
+        // model nvrhi's DescriptorTableManager assumes, e.g. streaming systems
+        // lazily registering SRVs.  Vulkan requires UPDATE_AFTER_BIND for that;
+        // without it the driver may read garbage descriptors for the newly written
+        // slots (observed as texture-header faults and device removal).
+        vk::DescriptorBindingFlags bindlessFlags =
+            vk::DescriptorBindingFlagBits::ePartiallyBound |
+            vk::DescriptorBindingFlagBits::eUpdateAfterBind |
+            vk::DescriptorBindingFlagBits::eUpdateUnusedWhilePending;
+        if (isBindless)
+            descriptorSetLayoutInfo.setFlags(vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool);
+
+        std::vector<vk::DescriptorBindingFlags> bindFlag(vulkanLayoutBindings.size(),
+            isBindless ? bindlessFlags : vk::DescriptorBindingFlags(vk::DescriptorBindingFlagBits::ePartiallyBound));
 
         auto extendedInfo = vk::DescriptorSetLayoutBindingFlagsCreateInfo()
             .setBindingCount(uint32_t(vulkanLayoutBindings.size()))
@@ -661,10 +675,14 @@ namespace nvrhi::vulkan
         const auto& descriptorSetLayout = layout->descriptorSetLayout;
         const auto& poolSizes = layout->descriptorPoolSizeInfo;
 
-        // create descriptor pool to allocate a descriptor from
+        // create descriptor pool to allocate a descriptor from.
+        // eUpdateAfterBind matches the layout's eUpdateAfterBindPool flag (see
+        // BindingLayout::bake) - descriptor tables are CPU-written while bound
+        // in in-flight command buffers.
         auto poolInfo = vk::DescriptorPoolCreateInfo()
             .setPoolSizeCount(uint32_t(poolSizes.size()))
             .setPPoolSizes(poolSizes.data())
+            .setFlags(vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind)
             .setMaxSets(1);
 
         vk::Result res = m_Context.device.createDescriptorPool(&poolInfo,
