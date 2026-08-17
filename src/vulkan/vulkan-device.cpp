@@ -123,6 +123,8 @@ namespace nvrhi::vulkan
         if (desc.bufferDeviceAddressSupported)
             m_Context.extensions.buffer_device_address = true;
 
+        m_Context.descriptorBindingUniformBufferUpdateAfterBind = desc.descriptorBindingUniformBufferUpdateAfterBind;
+
         void* pNext = nullptr;
         vk::PhysicalDeviceAccelerationStructurePropertiesKHR accelStructProperties;
         vk::PhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingPipelineProperties;

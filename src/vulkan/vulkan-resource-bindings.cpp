@@ -181,21 +181,25 @@ namespace nvrhi::vulkan
             .setBindingCount(uint32_t(vulkanLayoutBindings.size()))
             .setPBindings(vulkanLayoutBindings.data());
 
-        // Bindless descriptor tables are written from the CPU while previous frames
-        // that bind them are still executing - that is the D3D12 descriptor-heap
-        // model nvrhi's DescriptorTableManager assumes, e.g. streaming systems
-        // lazily registering SRVs.  Vulkan requires UPDATE_AFTER_BIND for that;
-        // without it the driver may read garbage descriptors for the newly written
-        // slots (observed as texture-header faults and device removal).
-        vk::DescriptorBindingFlags bindlessFlags =
-            vk::DescriptorBindingFlagBits::ePartiallyBound |
-            vk::DescriptorBindingFlagBits::eUpdateAfterBind |
-            vk::DescriptorBindingFlagBits::eUpdateUnusedWhilePending;
+        // Tables are CPU-written while in-flight command buffers bind them, which needs
+        // UPDATE_AFTER_BIND. Uniform buffers take their own feature, which the app may not have enabled.
+        std::vector<vk::DescriptorBindingFlags> bindFlag(vulkanLayoutBindings.size(),
+            vk::DescriptorBindingFlags(vk::DescriptorBindingFlagBits::ePartiallyBound));
+
         if (isBindless)
+        {
             descriptorSetLayoutInfo.setFlags(vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool);
 
-        std::vector<vk::DescriptorBindingFlags> bindFlag(vulkanLayoutBindings.size(),
-            isBindless ? bindlessFlags : vk::DescriptorBindingFlags(vk::DescriptorBindingFlagBits::ePartiallyBound));
+            for (size_t i = 0; i < vulkanLayoutBindings.size(); ++i)
+            {
+                if (vulkanLayoutBindings[i].descriptorType == vk::DescriptorType::eUniformBuffer
+                    && !m_Context.descriptorBindingUniformBufferUpdateAfterBind)
+                    continue;
+
+                bindFlag[i] |= vk::DescriptorBindingFlagBits::eUpdateAfterBind
+                    | vk::DescriptorBindingFlagBits::eUpdateUnusedWhilePending;
+            }
+        }
 
         auto extendedInfo = vk::DescriptorSetLayoutBindingFlagsCreateInfo()
             .setBindingCount(uint32_t(vulkanLayoutBindings.size()))
@@ -676,9 +680,7 @@ namespace nvrhi::vulkan
         const auto& poolSizes = layout->descriptorPoolSizeInfo;
 
         // create descriptor pool to allocate a descriptor from.
-        // eUpdateAfterBind matches the layout's eUpdateAfterBindPool flag (see
-        // BindingLayout::bake) - descriptor tables are CPU-written while bound
-        // in in-flight command buffers.
+        // The flag must match the layout's eUpdateAfterBindPool (see BindingLayout::bake).
         auto poolInfo = vk::DescriptorPoolCreateInfo()
             .setPoolSizeCount(uint32_t(poolSizes.size()))
             .setPPoolSizes(poolSizes.data())
