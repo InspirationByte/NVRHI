@@ -82,7 +82,8 @@ namespace nvrhi::d3d11
         Texture(const Context& context) : m_Context(context) { }
         const TextureDesc& getDesc() const override { return desc; }
         Object getNativeObject(ObjectType objectType) override;
-        Object getNativeView(ObjectType objectType, Format format, TextureSubresourceSet subresources, TextureDimension dimension, bool isReadOnlyDSV = false) override;
+        Object getNativeView(ObjectType objectType, Format format, TextureSubresourceSet subresources, TextureDimension dimension, bool isReadOnlyDSV = false,
+            std::optional<ComponentMapping> overrideComponentMapping = std::nullopt) override;
 
         ID3D11ShaderResourceView* getSRV(Format format, TextureSubresourceSet subresources, TextureDimension dimension);
         ID3D11RenderTargetView* getRTV(Format format, TextureSubresourceSet subresources);

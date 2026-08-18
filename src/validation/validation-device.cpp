@@ -1585,6 +1585,12 @@ namespace nvrhi::validation
             }
         }
 
+        if ((binding.overrideComponentMapping & c_ComponentMappingExplicit) && binding.type != ResourceType::Texture_SRV)
+        {
+            errorStream << "Component mappings are only supported on ResourceType::Texture_SRV bindings." << std::endl;
+            return false;
+        }
+
         switch (binding.type)
         {
         case ResourceType::None:

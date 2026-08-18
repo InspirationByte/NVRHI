@@ -383,7 +383,8 @@ namespace nvrhi::vulkan
 
                 const auto subresource = binding.subresources.resolve(texture->desc, false);
                 const auto textureViewType = getTextureViewType(binding.format, texture->desc.format);
-                auto& view = texture->getSubresourceView(subresource, binding.dimension, binding.format, vk::ImageUsageFlagBits::eSampled, textureViewType);
+                auto& view = texture->getSubresourceView(subresource, binding.dimension, binding.format, vk::ImageUsageFlagBits::eSampled, textureViewType,
+                    resolveComponentMapping(binding.overrideComponentMapping, texture->desc.defaultComponentMapping));
 
                 // Depth textures bound as SRV must use eDepthStencilReadOnlyOptimal because they may
                 // simultaneously be bound as a read-only depth-stencil attachment (DSV). Vulkan requires
@@ -766,7 +767,8 @@ namespace nvrhi::vulkan
 
                 const auto subresource = binding.subresources.resolve(texture->desc, false);
                 const auto textureViewType = getTextureViewType(binding.format, texture->desc.format);
-                auto& view = texture->getSubresourceView(subresource, binding.dimension, binding.format, vk::ImageUsageFlagBits::eSampled, textureViewType);
+                auto& view = texture->getSubresourceView(subresource, binding.dimension, binding.format, vk::ImageUsageFlagBits::eSampled, textureViewType,
+                    resolveComponentMapping(binding.overrideComponentMapping, texture->desc.defaultComponentMapping));
 
                 const FormatInfo& texFormatInfo = getFormatInfo(texture->desc.format);
                 const vk::ImageLayout srvLayout = (texFormatInfo.hasDepth || texFormatInfo.hasStencil)
