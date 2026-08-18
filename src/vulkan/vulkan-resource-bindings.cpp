@@ -181,7 +181,25 @@ namespace nvrhi::vulkan
             .setBindingCount(uint32_t(vulkanLayoutBindings.size()))
             .setPBindings(vulkanLayoutBindings.data());
 
-        std::vector<vk::DescriptorBindingFlags> bindFlag(vulkanLayoutBindings.size(), vk::DescriptorBindingFlagBits::ePartiallyBound);
+        // Tables are CPU-written while in-flight command buffers bind them, which needs
+        // UPDATE_AFTER_BIND. Uniform buffers take their own feature, which the app may not have enabled.
+        std::vector<vk::DescriptorBindingFlags> bindFlag(vulkanLayoutBindings.size(),
+            vk::DescriptorBindingFlags(vk::DescriptorBindingFlagBits::ePartiallyBound));
+
+        if (isBindless)
+        {
+            descriptorSetLayoutInfo.setFlags(vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool);
+
+            for (size_t i = 0; i < vulkanLayoutBindings.size(); ++i)
+            {
+                if (vulkanLayoutBindings[i].descriptorType == vk::DescriptorType::eUniformBuffer
+                    && !m_Context.descriptorBindingUniformBufferUpdateAfterBind)
+                    continue;
+
+                bindFlag[i] |= vk::DescriptorBindingFlagBits::eUpdateAfterBind
+                    | vk::DescriptorBindingFlagBits::eUpdateUnusedWhilePending;
+            }
+        }
 
         auto extendedInfo = vk::DescriptorSetLayoutBindingFlagsCreateInfo()
             .setBindingCount(uint32_t(vulkanLayoutBindings.size()))
@@ -662,10 +680,12 @@ namespace nvrhi::vulkan
         const auto& descriptorSetLayout = layout->descriptorSetLayout;
         const auto& poolSizes = layout->descriptorPoolSizeInfo;
 
-        // create descriptor pool to allocate a descriptor from
+        // create descriptor pool to allocate a descriptor from.
+        // The flag must match the layout's eUpdateAfterBindPool (see BindingLayout::bake).
         auto poolInfo = vk::DescriptorPoolCreateInfo()
             .setPoolSizeCount(uint32_t(poolSizes.size()))
             .setPPoolSizes(poolSizes.data())
+            .setFlags(vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind)
             .setMaxSets(1);
 
         vk::Result res = m_Context.device.createDescriptorPool(&poolInfo,

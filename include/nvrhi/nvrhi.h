@@ -65,7 +65,7 @@ namespace nvrhi
 {
     // Version of the public API provided by NVRHI.
     // Increment this when any changes to the API are made.
-    static constexpr uint32_t c_HeaderVersion = 26;
+    static constexpr uint32_t c_HeaderVersion = 27;
 
     // Verifies that the version of the implementation matches the version of the header.
     // Returns true if they match. Use this when initializing apps using NVRHI as a shared library.
@@ -3167,6 +3167,7 @@ namespace nvrhi
         RayTracingClusters,
         RayTracingOpacityMicromap,
         RayTracingPipeline,
+        RayTracingPositionFetch,
         SamplerFeedback,
         ShaderExecutionReordering,
         ShaderSpecializations,

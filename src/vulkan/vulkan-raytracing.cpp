@@ -580,7 +580,9 @@ namespace nvrhi::vulkan
 
         // Convert Vulkan size info to NVRHI size info
         info.resultMaxSizeInBytes = vkSizeInfo.accelerationStructureSize;
-        info.scratchSizeInBytes = vkSizeInfo.buildScratchSize;
+        info.scratchSizeInBytes = (params.type == rt::cluster::OperationType::Move)
+            ? vkSizeInfo.updateScratchSize
+            : vkSizeInfo.buildScratchSize;
 
         return info;
     }
@@ -1115,18 +1117,18 @@ namespace nvrhi::vulkan
         uint64_t scratchOffset = 0;
         uint64_t currentVersion = MakeVersion(m_CurrentCmdBuf->recordingID, m_CommandListParameters.queueType, false);
 
-        if (desc.scratchSizeInBytes > 0)
-        {
-            if (!m_ScratchManager->suballocateBuffer(desc.scratchSizeInBytes, &scratchBuffer, &scratchOffset, nullptr,
-                currentVersion, m_Context.nvClusterAccelerationStructureProperties.clusterScratchByteAlignment))
-            {
-                std::stringstream ss;
-                ss << "Couldn't suballocate a scratch buffer for cluster operation. "
-                    "The operation requires " << desc.scratchSizeInBytes << " bytes of scratch space.";
+        assert(desc.scratchSizeInBytes != 0 && "cluster operation scratch size is 0 - "
+               "did the caller forget getClusterOperationSizeInfo, or query with different params?");
 
-                m_Context.error(ss.str());
-                return;
-            }
+        if (!m_ScratchManager->suballocateBuffer(desc.scratchSizeInBytes, &scratchBuffer, &scratchOffset, nullptr,
+            currentVersion, m_Context.nvClusterAccelerationStructureProperties.clusterScratchByteAlignment))
+        {
+            std::stringstream ss;
+            ss << "Couldn't suballocate a scratch buffer for cluster operation. "
+                "The operation requires " << desc.scratchSizeInBytes << " bytes of scratch space.";
+
+            m_Context.error(ss.str());
+            return;
         }
 
         // Create commands info

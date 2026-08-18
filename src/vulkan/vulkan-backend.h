@@ -144,6 +144,7 @@ namespace nvrhi::vulkan
             bool buffer_device_address = false; // either KHR_ or Vulkan 1.2 versions
             bool KHR_ray_query = false;
             bool KHR_ray_tracing_pipeline = false;
+            bool KHR_ray_tracing_position_fetch = false;
             bool EXT_mesh_shader = false;
             bool KHR_fragment_shading_rate = false;
             bool EXT_conservative_rasterization = false;
@@ -176,6 +177,7 @@ namespace nvrhi::vulkan
         vk::PhysicalDeviceSubgroupProperties subgroupProperties;
         IMessageCallback* messageCallback = nullptr;
         bool logBufferLifetime = false;
+        bool descriptorBindingUniformBufferUpdateAfterBind = false;
 #ifdef NVRHI_WITH_RTXMU
         std::unique_ptr<rtxmu::VkAccelStructManager> rtxMemUtil;
         std::unique_ptr<RtxMuResources> rtxMuResources;
