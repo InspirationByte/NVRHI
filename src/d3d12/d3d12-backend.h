@@ -310,10 +310,12 @@ namespace nvrhi::d3d12
         const TextureDesc& getDesc() const override { return desc; }
 
         Object getNativeObject(ObjectType objectType) override;
-        Object getNativeView(ObjectType objectType, Format format, TextureSubresourceSet subresources, TextureDimension dimension, bool isReadOnlyDSV = false) override;
+        Object getNativeView(ObjectType objectType, Format format, TextureSubresourceSet subresources, TextureDimension dimension, bool isReadOnlyDSV = false,
+            std::optional<ComponentMapping> overrideComponentMapping = std::nullopt) override;
 
         void postCreate();
-        void createSRV(size_t descriptor, Format format, TextureDimension dimension, TextureSubresourceSet subresources) const;
+        void createSRV(size_t descriptor, Format format, TextureDimension dimension, TextureSubresourceSet subresources,
+            ComponentMapping componentMapping) const;
         void createUAV(size_t descriptor, Format format, TextureDimension dimension, TextureSubresourceSet subresources) const;
         void createRTV(size_t descriptor, Format format, TextureSubresourceSet subresources) const;
         void createDSV(size_t descriptor, TextureSubresourceSet subresources, bool isReadOnly = false) const;

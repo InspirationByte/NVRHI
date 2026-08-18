@@ -383,13 +383,15 @@ namespace nvrhi::vulkan
             StencilOnly
         };
 
-        typedef std::tuple<TextureSubresourceSet, TextureSubresourceViewType, TextureDimension, Format, vk::ImageUsageFlags> SubresourceViewKey;
+        // The packed ComponentMapping discriminates cache entries because 'usage' is
+        // zeroed for non-typeless textures before the key is built.
+        typedef std::tuple<TextureSubresourceSet, TextureSubresourceViewType, TextureDimension, Format, vk::ImageUsageFlags, uint16_t> SubresourceViewKey;
 
         struct Hash
         {
             std::size_t operator()(SubresourceViewKey const& s) const noexcept
             {
-                const auto& [subresources, viewType, dimension, format, usage] = s;
+                const auto& [subresources, viewType, dimension, format, usage, componentMapping] = s;
 
                 size_t hash = 0;
 
@@ -401,6 +403,7 @@ namespace nvrhi::vulkan
                 hash_combine(hash, dimension);
                 hash_combine(hash, format);
                 hash_combine(hash, uint32_t(usage));
+                hash_combine(hash, componentMapping);
 
                 return hash;
             }
@@ -432,7 +435,8 @@ namespace nvrhi::vulkan
         // 'viewtype' only matters when asking for a depth-stencil view; in situations where only depth or stencil can be bound
         // (such as an SRV with ImageLayout::eShaderReadOnlyOptimal), but not both, then this specifies which of the two aspect bits is to be set.
         TextureSubresourceView& getSubresourceView(const TextureSubresourceSet& subresources, TextureDimension dimension,
-            Format format, vk::ImageUsageFlags usage, TextureSubresourceViewType viewtype = TextureSubresourceViewType::AllAspects);
+            Format format, vk::ImageUsageFlags usage, TextureSubresourceViewType viewtype = TextureSubresourceViewType::AllAspects,
+            ComponentMapping componentMapping = ComponentMapping());
         
         uint32_t getNumSubresources() const;
         uint32_t getSubresourceIndex(uint32_t mipLevel, uint32_t arrayLayer) const;
@@ -440,7 +444,8 @@ namespace nvrhi::vulkan
         ~Texture() override;
         const TextureDesc& getDesc() const override { return desc; }
         Object getNativeObject(ObjectType objectType) override;
-        Object getNativeView(ObjectType objectType, Format format, TextureSubresourceSet subresources, TextureDimension dimension, bool isReadOnlyDSV = false) override;
+        Object getNativeView(ObjectType objectType, Format format, TextureSubresourceSet subresources, TextureDimension dimension, bool isReadOnlyDSV = false,
+            std::optional<ComponentMapping> overrideComponentMapping = std::nullopt) override;
 
     private:
         const VulkanContext& m_Context;

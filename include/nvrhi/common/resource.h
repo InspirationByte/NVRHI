@@ -58,8 +58,8 @@ namespace nvrhi
         constexpr ObjectType D3D12_Resource                         = 0x00020004;
         constexpr ObjectType D3D12_RenderTargetViewDescriptor       = 0x00020005;
         constexpr ObjectType D3D12_DepthStencilViewDescriptor       = 0x00020006;
-        constexpr ObjectType D3D12_ShaderResourceViewGpuDescripror  = 0x00020007;
-        constexpr ObjectType D3D12_UnorderedAccessViewGpuDescripror = 0x00020008;
+        constexpr ObjectType D3D12_ShaderResourceViewGpuDescriptor  = 0x00020007;
+        constexpr ObjectType D3D12_UnorderedAccessViewGpuDescriptor = 0x00020008;
         constexpr ObjectType D3D12_RootSignature                    = 0x00020009;
         constexpr ObjectType D3D12_PipelineState                    = 0x0002000a;
         constexpr ObjectType D3D12_CommandAllocator                 = 0x0002000b;
