@@ -635,7 +635,7 @@ namespace nvrhi::d3d12
         HRESULT hr = m_Context.device->GetDeviceRemovedReason();
         if (FAILED(hr))
         {
-            m_Context.messageCallback->message(MessageSeverity::Error, "Device Removed!");
+            m_Context.messageCallback->message(MessageSeverity::Fatal, "Device Removed!");
         }
 
         return pQueue->lastSubmittedInstance;

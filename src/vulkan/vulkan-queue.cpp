@@ -197,7 +197,7 @@ namespace nvrhi::vulkan
         }
         catch (vk::DeviceLostError&)
         {
-            m_Context.messageCallback->message(MessageSeverity::Error, "Device Removed!");
+            m_Context.messageCallback->message(MessageSeverity::Fatal, "Device Removed!");
         }
 
         m_WaitSemaphores.clear();
