@@ -103,6 +103,7 @@ namespace nvrhi::d3d12
             desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_POINT;
             break;
         case PrimitiveType::LineList:
+        case PrimitiveType::LineStrip:
             desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_LINE;
             break;
         case PrimitiveType::TriangleList:
