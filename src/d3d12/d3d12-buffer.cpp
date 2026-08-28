@@ -52,10 +52,10 @@ namespace nvrhi::d3d12
             m_Context.info(ss.str());
         }
 
-        if (m_ClearUAV != c_InvalidDescriptorIndex)
+        if (m_ClearUAV != DescriptorIndex{})
         {
-            m_Resources.shaderResourceViewHeap.releaseDescriptor(m_ClearUAV);
-            m_ClearUAV = c_InvalidDescriptorIndex;
+            m_Resources.shaderResourceViewHeap.releaseDescriptors(m_ClearUAV);
+            m_ClearUAV = {};
         }
     }
 
@@ -260,7 +260,7 @@ namespace nvrhi::d3d12
     {
         assert(desc.canHaveUAVs);
 
-        if (m_ClearUAV != c_InvalidDescriptorIndex)
+        if (m_ClearUAV != DescriptorIndex{})
             return m_ClearUAV;
 
         m_ClearUAV = m_Resources.shaderResourceViewHeap.allocateDescriptor();

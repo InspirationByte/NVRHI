@@ -118,7 +118,6 @@ namespace nvrhi::d3d12
     typedef uint32_t OptionalResourceState; // D3D12_RESOURCE_STATES + unknown value
 
     constexpr RootParameterIndex c_InvalidRootParameterIndex = ~0u; // Used to skip mutable descriptor set
-    constexpr DescriptorIndex c_InvalidDescriptorIndex = ~0u;
     constexpr OptionalResourceState c_ResourceStateUnknown = ~0u;
     
     D3D12_SHADER_VISIBILITY convertShaderStage(ShaderType s);
@@ -173,6 +172,7 @@ namespace nvrhi::d3d12
     class StaticDescriptorHeap : public IDescriptorHeap
     {
     private:
+        OffsetAllocator m_Allocator;
         const Context& m_Context;
         RefCountPtr<ID3D12DescriptorHeap> m_Heap;
         RefCountPtr<ID3D12DescriptorHeap> m_ShaderVisibleHeap;
@@ -181,9 +181,7 @@ namespace nvrhi::d3d12
         D3D12_CPU_DESCRIPTOR_HANDLE m_StartCpuHandleShaderVisible = { 0 };
         D3D12_GPU_DESCRIPTOR_HANDLE m_StartGpuHandleShaderVisible = { 0 };
         uint32_t m_Stride = 0;
-        uint32_t m_NumDescriptors = 0;
-        std::vector<bool> m_AllocatedDescriptors;
-        DescriptorIndex m_SearchStart = 0;
+        uint32_t m_MaxDescriptorIndex = 0;
         uint32_t m_NumAllocatedDescriptors = 0;
         std::mutex m_Mutex;
 
@@ -191,17 +189,17 @@ namespace nvrhi::d3d12
     public:
         explicit StaticDescriptorHeap(const Context& context);
 
+        D3D12_DESCRIPTOR_HEAP_TYPE getHeapType() const { return m_HeapType; }
+
         HRESULT allocateResources(D3D12_DESCRIPTOR_HEAP_TYPE heapType, uint32_t numDescriptors, bool shaderVisible);
         void copyToShaderVisibleHeap(DescriptorIndex index, uint32_t count = 1);
-        D3D12_DESCRIPTOR_HEAP_TYPE getHeapType() const { return m_HeapType; }
         
         DescriptorIndex allocateDescriptors(uint32_t count) override;
         DescriptorIndex allocateDescriptor() override;
-        void releaseDescriptors(DescriptorIndex baseIndex, uint32_t count) override;
-        void releaseDescriptor(DescriptorIndex index) override;
-        D3D12_CPU_DESCRIPTOR_HANDLE getCpuHandle(DescriptorIndex index) override;
-        D3D12_CPU_DESCRIPTOR_HANDLE getCpuHandleShaderVisible(DescriptorIndex index) override;
-        D3D12_GPU_DESCRIPTOR_HANDLE getGpuHandle(DescriptorIndex index) override;
+        void releaseDescriptors(DescriptorIndex alloc) override;
+        D3D12_CPU_DESCRIPTOR_HANDLE getCpuHandle(DescriptorIndex alloc) override;
+        D3D12_CPU_DESCRIPTOR_HANDLE getCpuHandleShaderVisible(DescriptorIndex alloc) override;
+        D3D12_GPU_DESCRIPTOR_HANDLE getGpuHandle(DescriptorIndex alloc) override;
         [[nodiscard]] ID3D12DescriptorHeap* getHeap() const override;
         [[nodiscard]] ID3D12DescriptorHeap* getShaderVisibleHeap() const override;
     };
@@ -371,7 +369,7 @@ namespace nvrhi::d3d12
     private:
         const Context& m_Context;
         DeviceResources& m_Resources;
-        DescriptorIndex m_ClearUAV = c_InvalidDescriptorIndex;
+        DescriptorIndex m_ClearUAV;
     };
 
     class StagingTexture : public RefCounter<IStagingTexture>
@@ -418,7 +416,7 @@ namespace nvrhi::d3d12
         const TextureDesc textureDesc; // used with state tracking
         RefCountPtr<ID3D12Resource> resource;
         TextureHandle pairedTexture;
-        DescriptorIndex clearDescriptorIndex = c_InvalidDescriptorIndex;
+        DescriptorIndex clearDescriptorIndex;
 
         SamplerFeedbackTexture(const Context& context, SamplerFeedbackTextureDesc desc, TextureDesc textureDesc, ITexture* pairedTexture)
             : TextureStateExtension(SamplerFeedbackTexture::textureDesc)
@@ -565,7 +563,7 @@ namespace nvrhi::d3d12
 
         static_vector<TextureHandle, c_MaxRenderTargets + 1> textures;
         static_vector<DescriptorIndex, c_MaxRenderTargets> RTVs;
-        DescriptorIndex DSV = c_InvalidDescriptorIndex;
+        DescriptorIndex DSV;
         uint32_t rtWidth = 0;
         uint32_t rtHeight = 0;
 
@@ -643,8 +641,8 @@ namespace nvrhi::d3d12
         BindingSetDesc desc;
 
         // ShaderType -> DescriptorIndex
-        DescriptorIndex descriptorTableSRVetc = 0;
-        DescriptorIndex descriptorTableSamplers = 0;
+        DescriptorIndex descriptorTableSRVetc;
+        DescriptorIndex descriptorTableSamplers;
         RootParameterIndex rootParameterIndexSRVetc = 0;
         RootParameterIndex rootParameterIndexSamplers = 0;
         bool descriptorTableValidSRVetc = false;
@@ -678,7 +676,7 @@ namespace nvrhi::d3d12
     {
     public:
         uint32_t capacity = 0;
-        DescriptorIndex firstDescriptor = 0;
+        DescriptorIndex firstDescriptor;
         BindingLayoutHandle layout;
 
         DescriptorTable(DeviceResources& resources)
@@ -690,7 +688,7 @@ namespace nvrhi::d3d12
         const BindingSetDesc* getDesc() const override { return nullptr; }
         IBindingLayout* getLayout() const override { return layout; }
         uint32_t getCapacity() const override { return capacity; }
-        uint32_t getFirstDescriptorIndexInHeap() const override { return firstDescriptor; }
+        uint32_t getFirstDescriptorIndexInHeap() const override { return firstDescriptor.offset; }
         
         bool isSamplerTable() const;
         StaticDescriptorHeap& getDescriptorHeap() const;

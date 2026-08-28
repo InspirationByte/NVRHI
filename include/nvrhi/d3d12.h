@@ -23,6 +23,7 @@
 #pragma once
 
 #include <nvrhi/nvrhi.h>
+#include <nvrhi/offset-allocator.h>
 
 #ifndef NOMINMAX
 #define NOMINMAX
@@ -60,7 +61,7 @@ namespace nvrhi::d3d12
 
     typedef RefCountPtr<ICommandList> CommandListHandle;
 
-    typedef uint32_t DescriptorIndex;
+    typedef nvrhi::OffsetAllocator::Alloc DescriptorIndex;
 
     class IDescriptorHeap
     {
@@ -70,11 +71,12 @@ namespace nvrhi::d3d12
     public:
         virtual DescriptorIndex allocateDescriptors(uint32_t count) = 0;
         virtual DescriptorIndex allocateDescriptor() = 0;
-        virtual void releaseDescriptors(DescriptorIndex baseIndex, uint32_t count) = 0;
-        virtual void releaseDescriptor(DescriptorIndex index) = 0;
+        virtual void releaseDescriptors(DescriptorIndex alloc) = 0;
+
         virtual D3D12_CPU_DESCRIPTOR_HANDLE getCpuHandle(DescriptorIndex index) = 0;
         virtual D3D12_CPU_DESCRIPTOR_HANDLE getCpuHandleShaderVisible(DescriptorIndex index) = 0;
         virtual D3D12_GPU_DESCRIPTOR_HANDLE getGpuHandle(DescriptorIndex index) = 0;
+
         [[nodiscard]] virtual ID3D12DescriptorHeap* getHeap() const = 0;
         [[nodiscard]] virtual ID3D12DescriptorHeap* getShaderVisibleHeap() const = 0;
 

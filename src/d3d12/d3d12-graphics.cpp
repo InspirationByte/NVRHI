@@ -271,10 +271,10 @@ namespace nvrhi::d3d12
     Framebuffer::~Framebuffer()
     {
         for (DescriptorIndex RTV : RTVs)
-            m_Resources.renderTargetViewHeap.releaseDescriptor(RTV);
+            m_Resources.renderTargetViewHeap.releaseDescriptors(RTV);
 
-        if (DSV != c_InvalidDescriptorIndex)
-            m_Resources.depthStencilViewHeap.releaseDescriptor(DSV);
+        if (DSV != DescriptorIndex{})
+            m_Resources.depthStencilViewHeap.releaseDescriptors(DSV);
     }
     
     void CommandList::bindFramebuffer(Framebuffer *fb)

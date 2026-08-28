@@ -382,7 +382,7 @@ namespace nvrhi::d3d12
     {
         DescriptorTable* ret = new DescriptorTable(m_Resources);
         ret->capacity = 0;
-        ret->firstDescriptor = 0;
+        ret->firstDescriptor = {};
         ret->layout = layout;
         
         return DescriptorTableHandle::Create(ret);
@@ -390,9 +390,9 @@ namespace nvrhi::d3d12
 
     BindingSet::~BindingSet()
     {
-        m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTableSRVetc, layout->descriptorTableSizeSRVetc);
+        m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTableSRVetc);
     
-        m_Resources.samplerHeap.releaseDescriptors(descriptorTableSamplers, layout->descriptorTableSizeSamplers);
+        m_Resources.samplerHeap.releaseDescriptors(descriptorTableSamplers);
     }
 
     bool DescriptorTable::isSamplerTable() const
@@ -410,7 +410,7 @@ namespace nvrhi::d3d12
     {
         StaticDescriptorHeap& heap = getDescriptorHeap();
 
-        heap.releaseDescriptors(firstDescriptor, capacity);
+        heap.releaseDescriptors(firstDescriptor);
     }
 
     BindingLayout::BindingLayout(const BindingLayoutDesc& _desc)
@@ -916,17 +916,10 @@ namespace nvrhi::d3d12
         StaticDescriptorHeap& heap = descriptorTable->getDescriptorHeap();
         const D3D12_DESCRIPTOR_HEAP_TYPE heapType = heap.getHeapType();
 
-        if (newSize < descriptorTable->capacity)
-        {
-            heap.releaseDescriptors(descriptorTable->firstDescriptor + newSize, descriptorTable->capacity - newSize);
-            descriptorTable->capacity = newSize;
-            return;
-        }
-
-        uint32_t originalFirst = descriptorTable->firstDescriptor;
+        DescriptorIndex originalFirst = descriptorTable->firstDescriptor;
         if (!keepContents && descriptorTable->capacity > 0)
         {
-            heap.releaseDescriptors(descriptorTable->firstDescriptor, descriptorTable->capacity);
+            heap.releaseDescriptors(descriptorTable->firstDescriptor);
         }
 
         descriptorTable->firstDescriptor = heap.allocateDescriptors(newSize);
@@ -943,7 +936,7 @@ namespace nvrhi::d3d12
                 heap.getCpuHandle(originalFirst),
                 heapType);
 
-            heap.releaseDescriptors(originalFirst, descriptorTable->capacity);
+            heap.releaseDescriptors(originalFirst);
         }
 
         descriptorTable->capacity = newSize;
