@@ -369,6 +369,20 @@ namespace nvrhi::d3d12
         {
             heapProps.Type = D3D12_HEAP_TYPE_DEFAULT;
 
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+            D3D12MA::ALLOCATION_DESC allocDesc{};
+            allocDesc.Flags = static_cast<D3D12MA::ALLOCATION_FLAGS>(D3D12MA::ALLOCATION_FLAG_WITHIN_BUDGET | D3D12MA::ALLOCATION_FLAG_STRATEGY_MIN_TIME);
+            allocDesc.HeapType = heapProps.Type;
+            allocDesc.ExtraHeapFlags = heapFlags;
+
+            hr = m_Context.allocator->CreateResource2(
+                &allocDesc,
+                &texture->resourceDesc,
+                initialState,
+                d.useClearValue ? &clearValue : nullptr,
+                &texture->allocation,
+                IID_PPV_ARGS(&texture->resource));
+#else
             if (m_EnhancedBarriersSupported)
             {
                 hr = m_Context.device10->CreateCommittedResource3(
@@ -391,6 +405,7 @@ namespace nvrhi::d3d12
                     d.useClearValue ? &clearValue : nullptr,
                     IID_PPV_ARGS(&texture->resource));
             }
+#endif // NVRHI_D3D12_WITH_D3D12MA
         }
 
         if (FAILED(hr))
@@ -546,6 +561,10 @@ namespace nvrhi::d3d12
             // the driver will track the resource internally so don't need to keep the handle around
             GFSDK_Aftermath_ResourceHandle resourceHandle = {};
             GFSDK_Aftermath_DX12_RegisterResource(resource, &resourceHandle);
+#endif
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+            if (allocation)
+                allocation->SetName(wname.c_str());
 #endif
         }
 
@@ -1004,6 +1023,19 @@ namespace nvrhi::d3d12
         D3D12_RESOURCE_STATES const initialState = convertResourceStates(desc.initialState);
         D3D12_BARRIER_LAYOUT const initialLayout = convertResourceStatesForEnhancedBarriers(desc.initialState, true).layout;
 
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        D3D12MA::ALLOCATION_DESC allocDesc{};
+        allocDesc.Flags = D3D12MA::ALLOCATION_FLAG_WITHIN_BUDGET;
+        allocDesc.HeapType = heapPropsDefault.Type;
+
+        HRESULT hr = m_Context.allocator->CreateResource2(
+            &allocDesc,
+            &rdFeedback,
+            initialState,
+            nullptr, // clear value
+            &texture->allocation,
+            IID_PPV_ARGS(&texture->resource));
+#else
         HRESULT hr;
         if (m_EnhancedBarriersSupported)
         {
@@ -1028,6 +1060,8 @@ namespace nvrhi::d3d12
                 nullptr,
                 IID_PPV_ARGS(&texture->resource));
         }
+#endif // NVRHI_D3D12_WITH_D3D12MA
+
 
         if (FAILED(hr))
         {
@@ -1044,6 +1078,10 @@ namespace nvrhi::d3d12
         std::wstringstream ssName;
         ssName << "Sampler Feedback Texture: " << utils::DebugNameToString(descPair.debugName);
         texture->resource->SetName(ssName.str().c_str());
+#ifdef NVRHI_D3D12_WITH_D3D12MA
+        if (texture->allocation)
+            texture->allocation->SetName(ssName.str().c_str());
+#endif
 
         return SamplerFeedbackTextureHandle::Create(texture);
     }
