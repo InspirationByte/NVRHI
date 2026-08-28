@@ -279,7 +279,8 @@ namespace nvrhi::d3d12
             setResourceStatesForFramebuffer(framebuffer);
         }
         
-        setGraphicsBindings(state.bindings, bindingUpdateMask,
+        setBindings(false, 
+            state.bindings, bindingUpdateMask,
             state.indirectParams, updateIndirectParams,
             state.indirectCountBuffer, updateIndirectCountBuffer,
             pso->rootSignature);
