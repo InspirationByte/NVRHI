@@ -142,19 +142,19 @@ namespace nvrhi::d3d12
     Texture::~Texture()
     {
         for (auto pair : m_RenderTargetViews)
-            m_Resources.renderTargetViewHeap.releaseDescriptor(pair.second);
+            m_Resources.renderTargetViewHeap.releaseDescriptors(pair.second);
 
         for (auto pair : m_DepthStencilViews)
-            m_Resources.depthStencilViewHeap.releaseDescriptor(pair.second);
+            m_Resources.depthStencilViewHeap.releaseDescriptors(pair.second);
 
         for (auto index : m_ClearMipLevelUAVs)
-            m_Resources.shaderResourceViewHeap.releaseDescriptor(index);
+            m_Resources.shaderResourceViewHeap.releaseDescriptors(index);
 
         for (auto pair : m_CustomSRVs)
-            m_Resources.shaderResourceViewHeap.releaseDescriptor(pair.second);
+            m_Resources.shaderResourceViewHeap.releaseDescriptors(pair.second);
 
         for (auto pair : m_CustomUAVs)
-            m_Resources.shaderResourceViewHeap.releaseDescriptor(pair.second);
+            m_Resources.shaderResourceViewHeap.releaseDescriptors(pair.second);
     }
 
     StagingTexture::SliceRegion StagingTexture::getSliceRegion(ID3D12Device *device, const TextureSlice& slice)
@@ -552,7 +552,7 @@ namespace nvrhi::d3d12
         if (desc.isUAV)
         {
             m_ClearMipLevelUAVs.resize(desc.mipLevels);
-            std::fill(m_ClearMipLevelUAVs.begin(), m_ClearMipLevelUAVs.end(), c_InvalidDescriptorIndex);
+            std::fill(m_ClearMipLevelUAVs.begin(), m_ClearMipLevelUAVs.end(), DescriptorIndex{});
         }
 
         planeCount = m_Resources.getFormatPlaneCount(resourceDesc.Format);
@@ -564,7 +564,7 @@ namespace nvrhi::d3d12
 
         DescriptorIndex descriptorIndex = m_ClearMipLevelUAVs[mipLevel];
 
-        if (descriptorIndex != c_InvalidDescriptorIndex)
+        if (descriptorIndex == DescriptorIndex{})
             return descriptorIndex;
 
         descriptorIndex = m_Resources.shaderResourceViewHeap.allocateDescriptor();
@@ -1280,7 +1280,7 @@ namespace nvrhi::d3d12
         SamplerFeedbackTexture* texture = checked_cast<SamplerFeedbackTexture*>(_texture);
 
         DescriptorIndex& descriptorIndex = texture->clearDescriptorIndex;
-        if (descriptorIndex == c_InvalidDescriptorIndex)
+        if (descriptorIndex == DescriptorIndex{})
         {
             descriptorIndex = m_Resources.shaderResourceViewHeap.allocateDescriptor();
             texture->createUAV(m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorIndex).ptr);
