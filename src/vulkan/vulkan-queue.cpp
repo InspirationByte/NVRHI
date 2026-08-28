@@ -25,6 +25,7 @@
 
 namespace nvrhi::vulkan
 {
+    extern vk::ImageAspectFlags guessImageAspectFlags(vk::Format format);
 
     TrackedCommandBuffer::~TrackedCommandBuffer()
     {
@@ -36,6 +37,7 @@ namespace nvrhi::vulkan
         , m_Queue(queue)
         , m_QueueID(queueID)
         , m_QueueFamilyIndex(queueFamilyIndex)
+        , m_LifetimeTracker(context, this)
     {
         auto semaphoreTypeInfo = vk::SemaphoreTypeCreateInfo()
             .setSemaphoreType(vk::SemaphoreType::eTimeline);
@@ -119,6 +121,13 @@ namespace nvrhi::vulkan
 
     uint64_t Queue::submit(ICommandList* const* ppCmd, size_t numCmd)
     {
+        // We want submit() to be free-threaded, but it accesses various members like m_WaitSemaphores,
+        // so use a mutex for synchronization.
+        // Note that these semaphore lists are persistent state of Queue, so vulkan::IDevice's methods
+        // queueWaitForSemaphore and queueSignalSemaphore will not work well with multi-threaded command list
+        // submission to the same queue.
+        std::lock_guard lockGuard(m_Mutex);
+        
         std::vector<vk::PipelineStageFlags> waitStageArray(m_WaitSemaphores.size());
         std::vector<vk::CommandBuffer> commandBuffers(numCmd);
 
@@ -127,7 +136,7 @@ namespace nvrhi::vulkan
             waitStageArray[i] = vk::PipelineStageFlagBits::eTopOfPipe;
         }
 
-        m_LastSubmittedID++;
+        uint64_t const submissionID = ++m_LastSubmittedID;
 
         for (size_t i = 0; i < numCmd; i++)
         {
@@ -135,17 +144,33 @@ namespace nvrhi::vulkan
             TrackedCommandBufferPtr commandBuffer = commandList->getCurrentCmdBuf();
 
             commandBuffers[i] = commandBuffer->cmdBuf;
-            m_CommandBuffersInFlight.push_back(commandBuffer);
+
+            // If the command list provides a custom lifetime tracker, use that.
+            // Otherwise, use our own tracker.
+            CommandListLifetimeTracker* lifetimeTracker = checked_cast<CommandListLifetimeTracker*>(
+                commandList->getDesc().lifetimeTracker);
+
+            if (lifetimeTracker)
+            {
+                assert(lifetimeTracker->getQueue() == this);
+            }
+            else
+            {
+                lifetimeTracker = &m_LifetimeTracker;
+            }
+
+            commandBuffer->submissionID = submissionID;
+            lifetimeTracker->push(commandBuffer);
 
             for (const auto& buffer : commandBuffer->referencedStagingBuffers)
             {
                 buffer->lastUseQueue = m_QueueID;
-                buffer->lastUseCommandListID = m_LastSubmittedID;
+                buffer->lastUseCommandListID = submissionID;
             }
         }
         
         m_SignalSemaphores.push_back(trackingSemaphore);
-        m_SignalSemaphoreValues.push_back(m_LastSubmittedID);
+        m_SignalSemaphoreValues.push_back(submissionID);
 
         auto timelineSemaphoreInfo = vk::TimelineSemaphoreSubmitInfo()
             .setSignalSemaphoreValueCount(uint32_t(m_SignalSemaphoreValues.size()))
@@ -162,10 +187,10 @@ namespace nvrhi::vulkan
             .setCommandBufferCount(uint32_t(numCmd))
             .setPCommandBuffers(commandBuffers.data())
             .setWaitSemaphoreCount(uint32_t(m_WaitSemaphores.size()))
-            .setPWaitSemaphores(m_WaitSemaphores.data())
+            .setPWaitSemaphores(m_WaitSemaphores.empty() ? nullptr : m_WaitSemaphores.data())
             .setPWaitDstStageMask(waitStageArray.data())
             .setSignalSemaphoreCount(uint32_t(m_SignalSemaphores.size()))
-            .setPSignalSemaphores(m_SignalSemaphores.data());
+            .setPSignalSemaphores(m_SignalSemaphores.empty() ? nullptr : m_SignalSemaphores.data());
 
         try {
             m_Queue.submit(submitInfo);
@@ -180,7 +205,7 @@ namespace nvrhi::vulkan
         m_SignalSemaphores.clear();
         m_SignalSemaphoreValues.clear();
         
-        return m_LastSubmittedID;
+        return submissionID;
     }
 
     void Queue::updateTextureTileMappings(ITexture* _texture, const TextureTilesMapping* tileMappings, uint32_t numTileMappings)
@@ -189,6 +214,32 @@ namespace nvrhi::vulkan
 
         std::vector<vk::SparseImageMemoryBind> sparseImageMemoryBinds;
         std::vector<vk::SparseMemoryBind> sparseMemoryBinds;
+
+        vk::ImageCreateInfo& imageInfo = texture->imageInfo;
+		vk::ImageAspectFlags textureAspectFlags = guessImageAspectFlags(imageInfo.format);
+
+		// Required for extent and offset since they must be multiples of the tile dimensions
+		uint32_t tileWidth = 1;
+		uint32_t tileHeight = 1;
+		uint32_t tileDepth = 1;
+
+        // Mip tail info, required for resource offset
+        vk::DeviceSize imageMipTailOffset = 0;
+
+        std::vector<vk::SparseImageFormatProperties> formatProperties = m_Context.physicalDevice.getSparseImageFormatProperties(imageInfo.format, imageInfo.imageType, imageInfo.samples, imageInfo.usage, imageInfo.tiling);
+		std::vector<vk::SparseImageMemoryRequirements> memoryRequirements = m_Context.device.getImageSparseMemoryRequirements(texture->image);
+
+		if (!formatProperties.empty())
+		{
+			tileWidth = formatProperties[0].imageGranularity.width;
+			tileHeight = formatProperties[0].imageGranularity.height;
+			tileDepth = formatProperties[0].imageGranularity.depth;
+		}
+
+        if (!memoryRequirements.empty())
+        {
+			imageMipTailOffset = memoryRequirements[0].imageMipTailOffset;
+        }
 
         for (size_t i = 0; i < numTileMappings; i++)
         {
@@ -204,7 +255,7 @@ namespace nvrhi::vulkan
                 if (tiledTextureRegion.tilesNum)
                 {
                     sparseMemoryBinds.push_back(vk::SparseMemoryBind()
-                        .setResourceOffset(0)
+                        .setResourceOffset(imageMipTailOffset + tiledTextureCoordinate.arrayLevel * imageMipTailOffset)
                         .setSize(tiledTextureRegion.tilesNum * texture->tileByteSize)
                         .setMemory(deviceMemory)
                         .setMemoryOffset(deviceMemory ? tileMappings[i].byteOffsets[j] : 0));
@@ -214,16 +265,17 @@ namespace nvrhi::vulkan
                     vk::ImageSubresource subresource = {};
                     subresource.arrayLayer = tiledTextureCoordinate.arrayLevel;
                     subresource.mipLevel = tiledTextureCoordinate.mipLevel;
+					subresource.aspectMask = textureAspectFlags; // Required for sparse binding
 
                     vk::Offset3D offset3D;
-                    offset3D.x = tiledTextureCoordinate.x;
-                    offset3D.y = tiledTextureCoordinate.y;
-                    offset3D.z = tiledTextureCoordinate.z;
+                    offset3D.x = tiledTextureCoordinate.x * tileWidth;
+                    offset3D.y = tiledTextureCoordinate.y * tileHeight;
+                    offset3D.z = tiledTextureCoordinate.z * tileHeight;
 
                     vk::Extent3D extent3D;
-                    extent3D.width = tiledTextureRegion.width;
-                    extent3D.height = tiledTextureRegion.height;
-                    extent3D.depth = tiledTextureRegion.depth;
+                    extent3D.width = tiledTextureRegion.width * tileWidth;
+                    extent3D.height = tiledTextureRegion.height * tileHeight;
+                    extent3D.depth = tiledTextureRegion.depth * tileDepth;
 
                     sparseImageMemoryBinds.push_back(vk::SparseImageMemoryBind()
                         .setSubresource(subresource)
@@ -263,20 +315,43 @@ namespace nvrhi::vulkan
         return m_LastFinishedID;
     }
 
-    void Queue::retireCommandBuffers()
+    void Queue::runGarbageCollection()
     {
-        std::list<TrackedCommandBufferPtr> submissions = std::move(m_CommandBuffersInFlight);
-
-        uint64_t lastFinishedID = updateLastFinishedID();
+        std::lock_guard lockGuard(m_Mutex);
         
-        for (const TrackedCommandBufferPtr& cmd : submissions)
+        m_LifetimeTracker.runGarbageCollection();
+    }
+
+    void Queue::returnCommandBuffersToPool(std::list<TrackedCommandBufferPtr> const& commandBuffers)
+    {
+        std::lock_guard lockGuard(m_Mutex);
+
+        m_CommandBuffersPool.insert(m_CommandBuffersPool.end(), commandBuffers.begin(), commandBuffers.end());
+    }
+
+    CommandListLifetimeTracker::CommandListLifetimeTracker(const VulkanContext& context, Queue* queue)
+	    : m_Context(context)
+		, m_Queue(queue)
+    {
+        assert(m_Queue);
+    }
+
+    void CommandListLifetimeTracker::runGarbageCollection()
+    {
+        std::list<TrackedCommandBufferPtr> releasedCmdBufs;
+
+        uint64_t lastFinishedID = m_Queue->updateLastFinishedID();
+
+        auto it = m_CommandBuffersInFlight.begin();
+        for (; it != m_CommandBuffersInFlight.end(); ++it)
         {
+            TrackedCommandBufferPtr const& cmd = *it;
             if (cmd->submissionID <= lastFinishedID)
             {
                 cmd->referencedResources.clear();
                 cmd->referencedStagingBuffers.clear();
                 cmd->submissionID = 0;
-                m_CommandBuffersPool.push_back(cmd);
+                releasedCmdBufs.push_back(cmd);
 
 #ifdef NVRHI_WITH_RTXMU
                 if (!cmd->rtxmuBuildIds.empty())
@@ -297,20 +372,20 @@ namespace nvrhi::vulkan
             }
             else
             {
-                m_CommandBuffersInFlight.push_back(cmd);
+                break;
             }
+        }
+
+        if (it != m_CommandBuffersInFlight.begin())
+        {
+            m_CommandBuffersInFlight.erase(m_CommandBuffersInFlight.begin(), it);
+            m_Queue->returnCommandBuffersToPool(releasedCmdBufs);
         }
     }
 
-    TrackedCommandBufferPtr Queue::getCommandBufferInFlight(uint64_t submissionID)
+    void CommandListLifetimeTracker::push(TrackedCommandBufferPtr commandBuffer)
     {
-        for (const TrackedCommandBufferPtr& cmd : m_CommandBuffersInFlight)
-        {
-            if (cmd->submissionID == submissionID)
-                return cmd;
-        }
-
-        return nullptr;
+        m_CommandBuffersInFlight.push_back(commandBuffer);
     }
 
     VkSemaphore Device::getQueueSemaphore(CommandQueue queueID)

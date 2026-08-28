@@ -28,85 +28,84 @@ namespace nvrhi::vulkan
 
     extern vk::ImageAspectFlags guessImageAspectFlags(vk::Format format);
 
-    // we follow DX conventions when mapping slices and mip levels:
-    // for a 3D or array texture, array layers / 3d depth slices for a given mip slice
-    // are consecutive in memory, with padding in between for alignment
-    // https://msdn.microsoft.com/en-us/library/windows/desktop/dn705766(v=vs.85).aspx
-
-    // compute the size of a mip level slice
-    // this is the size of a single slice of a 3D texture / array for the given mip level
-    size_t StagingTexture::computeSliceSize(uint32_t mipLevel)
+    static size_t alignBufferOffset(size_t off)
     {
-        const FormatInfo& formatInfo = getFormatInfo(desc.format);
-
-        uint32_t wInBlocks = std::max(((desc.width >> mipLevel) + formatInfo.blockSize - 1) / formatInfo.blockSize, 1u);
-        uint32_t hInBlocks = std::max(((desc.height >> mipLevel) + formatInfo.blockSize - 1) / formatInfo.blockSize, 1u);
-
-        size_t blockPitchBytes = wInBlocks * formatInfo.bytesPerBlock;
-        return blockPitchBytes * hInBlocks;
+        return (off + 3u) & ~size_t(3u); // Round up to a multiple of 4
     }
 
-    static off_t alignBufferOffset(off_t off)
+    static size_t computePlacedBufferOffset(
+        const PlacedSubresourceFootprint& footprint, uint32_t x, uint32_t y, uint32_t z)
     {
-        static constexpr off_t bufferAlignmentBytes = 4;
-        return ((off + (bufferAlignmentBytes - 1)) / bufferAlignmentBytes) * bufferAlignmentBytes;
+        FormatInfo const& formatInfo = getFormatInfo(footprint.format);
+
+        uint32_t blockX = x / formatInfo.blockSize;
+        uint32_t blockY = y / formatInfo.blockSize;
+        uint32_t blockZ = z;
+
+        return footprint.offset + (blockX + (blockY + blockZ * footprint.numRows) * footprint.rowPitch);
     }
 
-    const StagingTextureRegion& StagingTexture::getSliceRegion(uint32_t mipLevel, uint32_t arraySlice, uint32_t z)
+    size_t StagingTexture::computeCopyableFootprints()
     {
-        if (desc.depth != 1)
-        {
-            // Hard case, since each mip level has half the slices as the previous one.
-            assert(arraySlice == 0);
-            assert(z < desc.depth);
+        uint32_t width = desc.width;
+        uint32_t height = desc.height;
+        uint32_t depth = desc.depth;
+        uint32_t numMips = desc.mipLevels;
+        uint32_t arraySize = desc.arraySize;
 
-            uint32_t mipDepth = desc.depth;
-            uint32_t index = 0;
-            while (mipLevel-- > 0)
-            {
-                index += mipDepth;
-                mipDepth = std::max(mipDepth, uint32_t(1));
-            }
-            return sliceRegions[index + z];
-        }
-        else if (desc.arraySize != 1)
+        if (desc.dimension == TextureDimension::Texture3D)
         {
-            // Easy case, since each mip level has a consistent number of slices.
-            assert(z == 0);
-            assert(arraySlice < desc.arraySize);
-            assert(sliceRegions.size() == desc.mipLevels * desc.arraySize);
-            return sliceRegions[mipLevel * desc.arraySize + arraySlice];
+            assert(desc.arraySize == 1);
+            arraySize = 1;
         }
         else
         {
-            assert(arraySlice == 0);
-            assert(z == 0);
-            assert(sliceRegions.size() == desc.mipLevels);
-            return sliceRegions[mipLevel];
+            assert(desc.depth == 1);
+            depth = 1;
         }
+
+        const FormatInfo &formatInfo = getFormatInfo(desc.format);
+
+        size_t offset = 0;
+
+        for (uint32_t mipLevel = 0; mipLevel < numMips; ++mipLevel)
+        {
+            uint32_t widthInBlocks = std::max((width + formatInfo.blockSize - 1) / formatInfo.blockSize, 1u);
+            uint32_t heightInBlocks = std::max((height + formatInfo.blockSize - 1) / formatInfo.blockSize, 1u);
+
+            PlacedSubresourceFootprint layout;
+            layout.rowSizeInBytes = widthInBlocks * formatInfo.bytesPerBlock;
+            layout.numRows = heightInBlocks;
+            layout.totalBytes = size_t(depth) * heightInBlocks * layout.rowSizeInBytes;
+            layout.format = desc.format;
+            layout.width = width;
+            layout.height = height;
+            layout.depth = depth;
+            layout.rowPitch = layout.rowSizeInBytes;
+
+            for (uint32_t arraySlice = 0; arraySlice < arraySize; ++arraySlice)
+            {
+                layout.offset = alignBufferOffset(offset);
+                offset += layout.totalBytes;
+                placedFootprints.push_back(layout);
+            }
+
+            width = std::max(width >> 1u, 1u);
+            height = std::max(height >> 1u, 1u);
+            depth = std::max(depth >> 1u, 1u);
+        }
+
+        return offset; // total size in bytes of upload buffer
     }
 
-    void StagingTexture::populateSliceRegions()
+    const PlacedSubresourceFootprint* StagingTexture::getCopyableFootprint(MipLevel mipLevel, ArraySlice arraySlice)
     {
-        off_t curOffset = 0;
+        uint32_t subresourceIndex = mipLevel * desc.arraySize + arraySlice;
 
-        sliceRegions.clear();
+        if (subresourceIndex >= placedFootprints.size())
+            return nullptr;
 
-        for(uint32_t mip = 0; mip < desc.mipLevels; mip++)
-        {
-            auto sliceSize = computeSliceSize(mip);
-
-            uint32_t depth = std::max(desc.depth >> mip, uint32_t(1));
-            uint32_t numSlices = desc.arraySize * depth;
-
-            for (uint32_t slice = 0; slice < numSlices; slice++)
-            {
-                sliceRegions.push_back({ curOffset, sliceSize });
-
-                // update offset for the next region
-                curOffset = alignBufferOffset(off_t(curOffset + sliceSize));
-            }
-        }
+        return &placedFootprints[subresourceIndex];
     }
 
     StagingTextureHandle Device::createStagingTexture(const TextureDesc& desc, CpuAccessMode cpuAccess)
@@ -115,10 +114,11 @@ namespace nvrhi::vulkan
 
         StagingTexture *tex = new StagingTexture();
         tex->desc = desc;
-        tex->populateSliceRegions();
+
+        size_t totalSizeInBytes = tex->computeCopyableFootprints();
 
         BufferDesc bufDesc;
-        bufDesc.byteSize = tex->getBufferSize();
+        bufDesc.byteSize = totalSizeInBytes;
         assert(bufDesc.byteSize > 0);
         bufDesc.debugName = desc.debugName;
         bufDesc.cpuAccess = cpuAccess;
@@ -143,21 +143,21 @@ namespace nvrhi::vulkan
 
         StagingTexture* tex = checked_cast<StagingTexture*>(_tex);
 
-        auto resolvedSlice = slice.resolve(tex->desc);
+        TextureSlice const resolvedSlice = slice.resolve(tex->desc);
 
-        auto region = tex->getSliceRegion(resolvedSlice.mipLevel, resolvedSlice.arraySlice, resolvedSlice.z);
+        PlacedSubresourceFootprint const* layout = tex->getCopyableFootprint(
+            resolvedSlice.mipLevel, resolvedSlice.arraySlice);
 
-        assert((region.offset & 0x3) == 0); // per vulkan spec
-        assert(region.size > 0);
+        assert(layout);
+        if (!layout)
+            return nullptr;
 
-        const FormatInfo& formatInfo = getFormatInfo(tex->desc.format);
-        assert(outRowPitch);
+        assert((layout->offset & 0x3) == 0); // per vulkan spec
+        assert(layout->totalBytes > 0);
 
-        auto wInBlocks = resolvedSlice.width / formatInfo.blockSize;
+        *outRowPitch = layout->rowPitch;
 
-        *outRowPitch = wInBlocks * formatInfo.bytesPerBlock;
-
-        return mapBuffer(tex->buffer, cpuAccess, region.offset, region.size);
+        return mapBuffer(tex->buffer, cpuAccess, layout->offset, layout->totalBytes);
     }
 
     void Device::unmapStagingTexture(IStagingTexture* _tex)
@@ -172,13 +172,21 @@ namespace nvrhi::vulkan
         Texture* src = checked_cast<Texture*>(_src);
         StagingTexture* dst = checked_cast<StagingTexture*>(_dst);
 
-        auto resolvedDstSlice = dstSlice.resolve(dst->desc);
-        auto resolvedSrcSlice = srcSlice.resolve(src->desc);
+        TextureSlice const resolvedSrcSlice = srcSlice.resolve(src->desc);
+        TextureSlice const resolvedDstSlice = dstSlice.resolve(dst->desc);
 
         assert(resolvedDstSlice.depth == 1);
         
-        auto dstRegion = dst->getSliceRegion(resolvedDstSlice.mipLevel, resolvedDstSlice.arraySlice, resolvedDstSlice.z);
-        assert((dstRegion.offset & 0x3) == 0); // per Vulkan spec
+        PlacedSubresourceFootprint const* dstFootprint = dst->getCopyableFootprint(
+            resolvedDstSlice.mipLevel, resolvedDstSlice.arraySlice);
+
+        assert(dstFootprint);
+        if (!dstFootprint)
+            return;
+
+        size_t dstBufferOffset = computePlacedBufferOffset(*dstFootprint,
+            resolvedDstSlice.x, resolvedDstSlice.y, resolvedDstSlice.z);
+        assert((dstBufferOffset & 0x3) == 0);  // per Vulkan spec
 
         TextureSubresourceSet srcSubresource = TextureSubresourceSet(
             resolvedSrcSlice.mipLevel, 1,
@@ -186,16 +194,17 @@ namespace nvrhi::vulkan
         );
 
         auto imageCopy = vk::BufferImageCopy()
-                            .setBufferOffset(dstRegion.offset)
-                            .setBufferRowLength(resolvedDstSlice.width)
-                            .setBufferImageHeight(resolvedDstSlice.height)
-                            .setImageSubresource(vk::ImageSubresourceLayers()
-                                                    .setAspectMask(guessImageAspectFlags(src->imageInfo.format))
-                                                    .setMipLevel(resolvedSrcSlice.mipLevel)
-                                                    .setBaseArrayLayer(resolvedSrcSlice.arraySlice)
-                                                    .setLayerCount(1))
-                            .setImageOffset(vk::Offset3D(resolvedSrcSlice.x, resolvedSrcSlice.y, resolvedSrcSlice.z))
-                            .setImageExtent(vk::Extent3D(resolvedSrcSlice.width, resolvedSrcSlice.height, resolvedSrcSlice.depth));
+            .setBufferOffset(dstBufferOffset)
+            .setBufferRowLength(dstFootprint->width)
+            .setBufferImageHeight(dstFootprint->height)
+            .setImageSubresource(
+                vk::ImageSubresourceLayers()
+                    .setAspectMask(guessImageAspectFlags(src->imageInfo.format))
+                    .setMipLevel(resolvedSrcSlice.mipLevel)
+                    .setBaseArrayLayer(resolvedSrcSlice.arraySlice)
+                    .setLayerCount(1))
+            .setImageOffset(vk::Offset3D(resolvedSrcSlice.x, resolvedSrcSlice.y, resolvedSrcSlice.z))
+            .setImageExtent(vk::Extent3D(resolvedSrcSlice.width, resolvedSrcSlice.height, resolvedSrcSlice.depth));
 
         assert(m_CurrentCmdBuf);
 
@@ -203,6 +212,7 @@ namespace nvrhi::vulkan
         {
             requireBufferState(dst->buffer, ResourceStates::CopyDest);
             requireTextureState(src, srcSubresource, ResourceStates::CopySource);
+            m_BindingStatesDirty = true;
         }
         commitBarriers();
 
@@ -219,32 +229,36 @@ namespace nvrhi::vulkan
         StagingTexture* src = checked_cast<StagingTexture*>(_src);
         Texture* dst = checked_cast<Texture*>(_dst);
 
-        auto resolvedDstSlice = dstSlice.resolve(dst->desc);
-        auto resolvedSrcSlice = srcSlice.resolve(src->desc);
-        
-        auto srcRegion = src->getSliceRegion(resolvedSrcSlice.mipLevel, resolvedSrcSlice.arraySlice, resolvedSrcSlice.z);
+        TextureSlice const resolvedSrcSlice = srcSlice.resolve(src->desc);
+        TextureSlice const resolvedDstSlice = dstSlice.resolve(dst->desc);
 
-        assert((srcRegion.offset & 0x3) == 0); // per vulkan spec
-        assert(srcRegion.size > 0);
+        PlacedSubresourceFootprint const* srcFootprint = src->getCopyableFootprint(
+            resolvedSrcSlice.mipLevel, resolvedSrcSlice.arraySlice);
+
+        assert(srcFootprint);
+        if (!srcFootprint)
+            return;
+
+        size_t srcBufferOffset = computePlacedBufferOffset(*srcFootprint, srcSlice.x, srcSlice.y, srcSlice.z);
+        assert((srcBufferOffset & 0x3) == 0);  // per vulkan spec
 
         TextureSubresourceSet dstSubresource = TextureSubresourceSet(
             resolvedDstSlice.mipLevel, 1,
             resolvedDstSlice.arraySlice, 1
         );
 
-        vk::Offset3D dstOffset(resolvedDstSlice.x, resolvedDstSlice.y, resolvedDstSlice.z);
-
         auto imageCopy = vk::BufferImageCopy()
-                            .setBufferOffset(srcRegion.offset)
-                            .setBufferRowLength(resolvedSrcSlice.width)
-                            .setBufferImageHeight(resolvedSrcSlice.height)
-                            .setImageSubresource(vk::ImageSubresourceLayers()
-                                                    .setAspectMask(guessImageAspectFlags(dst->imageInfo.format))
-                                                    .setMipLevel(resolvedDstSlice.mipLevel)
-                                                    .setBaseArrayLayer(resolvedDstSlice.arraySlice)
-                                                    .setLayerCount(1))
-                            .setImageOffset(dstOffset)
-                            .setImageExtent(vk::Extent3D(resolvedDstSlice.width, resolvedDstSlice.height, resolvedDstSlice.depth));
+            .setBufferOffset(srcBufferOffset)
+            .setBufferRowLength(srcFootprint->width)
+            .setBufferImageHeight(srcFootprint->height)
+            .setImageSubresource(
+                vk::ImageSubresourceLayers()
+                    .setAspectMask(guessImageAspectFlags(dst->imageInfo.format))
+                    .setMipLevel(resolvedDstSlice.mipLevel)
+                    .setBaseArrayLayer(resolvedDstSlice.arraySlice)
+                    .setLayerCount(1))
+            .setImageOffset(vk::Offset3D(resolvedDstSlice.x, resolvedDstSlice.y, resolvedDstSlice.z))
+            .setImageExtent(vk::Extent3D(resolvedSrcSlice.width, resolvedSrcSlice.height, resolvedSrcSlice.depth));
 
         assert(m_CurrentCmdBuf);
 
@@ -252,6 +266,7 @@ namespace nvrhi::vulkan
         {
             requireBufferState(src->buffer, ResourceStates::CopySource);
             requireTextureState(dst, dstSubresource, ResourceStates::CopyDest);
+            m_BindingStatesDirty = true;
         }
         commitBarriers();
 

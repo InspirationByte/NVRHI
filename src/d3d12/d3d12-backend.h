@@ -38,12 +38,17 @@
 #include <GFSDK_Aftermath.h>
 #endif
 
-// There's no version check available in the nvapi header,
-// instead to check if the NvAPI linked is OMM compatible version (>520) we look for one of the defines it adds...
-#if NVRHI_D3D12_WITH_NVAPI && defined(NVAPI_GET_RAYTRACING_OPACITY_MICROMAP_ARRAY_PREBUILD_INFO_PARAMS_VER)
-#define NVRHI_WITH_NVAPI_OPACITY_MICROMAP (1)
+// If using the Agility SDK version of OMM, ignore the NVAPI version
+#if NVRHI_D3D12_WITH_DXR12_OPACITY_MICROMAP
+    #define NVRHI_WITH_NVAPI_OPACITY_MICROMAP (0)
 #else
-#define NVRHI_WITH_NVAPI_OPACITY_MICROMAP (0)
+    // There's no version check available in the nvapi header,
+    // instead to check if the NvAPI linked is OMM compatible version (>520) we look for one of the defines it adds...
+    #if NVRHI_D3D12_WITH_NVAPI && defined(NVAPI_GET_RAYTRACING_OPACITY_MICROMAP_ARRAY_PREBUILD_INFO_PARAMS_VER)
+        #define NVRHI_WITH_NVAPI_OPACITY_MICROMAP (1)
+    #else
+        #define NVRHI_WITH_NVAPI_OPACITY_MICROMAP (0)
+    #endif
 #endif
 
 // ... same for DMM compatible versions (>=535) we look for one of the defines it adds
@@ -60,11 +65,28 @@
 #endif
 
 // Line-Swept Spheres were added in NVAPI SDK 572.18
-#if NVRHI_D3D12_WITH_NVAPI && (NVAPI_SDK_VERSION >= 57218)
+#if NVRHI_D3D12_WITH_NVAPI && !NVRHI_D3D12_WITH_DXR12_OPACITY_MICROMAP && (NVAPI_SDK_VERSION >= 57218)
 #define NVRHI_WITH_NVAPI_LSS (1)
 #else
 #define NVRHI_WITH_NVAPI_LSS (0)
 #endif
+
+// Preview 717 exposes cooperative-vector feature queries (D3D12_FEATURE_COOPERATIVE_VECTOR).
+// Preview 720+ uses the Linear Algebra feature tier and matrix-operation queries when DIRECT3D_LINEAR_ALGEBRA is defined.
+#if (D3D12_PREVIEW_SDK_VERSION == 717) || (defined(DIRECT3D_LINEAR_ALGEBRA) && D3D12_PREVIEW_SDK_VERSION >= 720)
+#define NVRHI_D3D12_WITH_COOP_VECTOR_COMMON (1)
+#else
+#define NVRHI_D3D12_WITH_COOP_VECTOR_COMMON (0)
+#endif
+
+#if defined(DIRECT3D_LINEAR_ALGEBRA) && D3D12_PREVIEW_SDK_VERSION >= 720
+#define NVRHI_D3D12_WITH_LINALG (1)
+#else
+#define NVRHI_D3D12_WITH_LINALG (0)
+#endif
+
+// Deprecated: downstream code should use NVRHI_D3D12_WITH_COOP_VECTOR_COMMON; alias will be removed after a deprecation window.
+#define NVRHI_D3D12_WITH_COOPVEC NVRHI_D3D12_WITH_COOP_VECTOR_COMMON
 
 #include <bitset>
 #include <memory>
@@ -89,11 +111,13 @@ namespace nvrhi::d3d12
     class RootSignature;
     class Buffer;
     class CommandList;
+    class Device;
     struct Context;
 
     typedef uint32_t RootParameterIndex;
     typedef uint32_t OptionalResourceState; // D3D12_RESOURCE_STATES + unknown value
 
+    constexpr RootParameterIndex c_InvalidRootParameterIndex = ~0u; // Used to skip mutable descriptor set
     constexpr DescriptorIndex c_InvalidDescriptorIndex = ~0u;
     constexpr OptionalResourceState c_ResourceStateUnknown = ~0u;
     
@@ -107,6 +131,11 @@ namespace nvrhi::d3d12
     UINT convertSamplerReductionType(SamplerReductionType reductionType);
     D3D12_SHADING_RATE convertPixelShadingRate(VariableShadingRate shadingRate);
     D3D12_SHADING_RATE_COMBINER convertShadingRateCombiner(ShadingRateCombiner combiner);
+#if NVRHI_D3D12_WITH_COOP_VECTOR_COMMON
+    D3D12_LINEAR_ALGEBRA_DATATYPE convertCoopVecDataType(coopvec::DataType type);
+    coopvec::DataType convertCoopVecDataType(D3D12_LINEAR_ALGEBRA_DATATYPE type);
+    D3D12_LINEAR_ALGEBRA_MATRIX_LAYOUT convertCoopVecMatrixLayout(coopvec::MatrixLayout layout);
+#endif
 
     void WaitForFence(ID3D12Fence* fence, uint64_t value, HANDLE event);
     uint32_t calcSubresource(uint32_t MipSlice, uint32_t ArraySlice, uint32_t PlaneSlice, uint32_t MipLevels, uint32_t ArraySize);
@@ -120,6 +149,10 @@ namespace nvrhi::d3d12
         RefCountPtr<ID3D12Device2> device2;
         RefCountPtr<ID3D12Device5> device5;
         RefCountPtr<ID3D12Device8> device8;
+        RefCountPtr<ID3D12Device10> device10;
+#if NVRHI_D3D12_WITH_COOP_VECTOR_COMMON
+        RefCountPtr<ID3D12DevicePreview> devicePreview;
+#endif
 #ifdef NVRHI_WITH_RTXMU
         std::unique_ptr<rtxmu::DxAccelStructManager> rtxMemUtil;
 #endif
@@ -127,6 +160,7 @@ namespace nvrhi::d3d12
         RefCountPtr<ID3D12CommandSignature> drawIndirectSignature;
         RefCountPtr<ID3D12CommandSignature> drawIndexedIndirectSignature;
         RefCountPtr<ID3D12CommandSignature> dispatchIndirectSignature;
+        RefCountPtr<ID3D12CommandSignature> dispatchMeshIndirectSignature;
         RefCountPtr<ID3D12QueryHeap> timerQueryHeap;
         RefCountPtr<Buffer> timerQueryResolveBuffer;
 
@@ -159,6 +193,7 @@ namespace nvrhi::d3d12
 
         HRESULT allocateResources(D3D12_DESCRIPTOR_HEAP_TYPE heapType, uint32_t numDescriptors, bool shaderVisible);
         void copyToShaderVisibleHeap(DescriptorIndex index, uint32_t count = 1);
+        D3D12_DESCRIPTOR_HEAP_TYPE getHeapType() const { return m_HeapType; }
         
         DescriptorIndex allocateDescriptors(uint32_t count) override;
         DescriptorIndex allocateDescriptor() override;
@@ -221,9 +256,9 @@ namespace nvrhi::d3d12
         RefCountPtr<IShaderLibrary> library;
 
         ShaderLibraryEntry(IShaderLibrary* pLibrary, const char* entryName, ShaderType shaderType)
-            : desc(shaderType)
-            , library(pLibrary)
+            : library(pLibrary)
         {
+            desc.shaderType = shaderType;
             desc.entryName = entryName;
         }
 
@@ -253,14 +288,14 @@ namespace nvrhi::d3d12
     {
     public:
         const TextureDesc desc;
-        const D3D12_RESOURCE_DESC resourceDesc;
+        const D3D12_RESOURCE_DESC1 resourceDesc;
         RefCountPtr<ID3D12Resource> resource;
         uint8_t planeCount = 1;
         HANDLE sharedHandle = nullptr;
         HeapHandle heap;
 
 
-        Texture(const Context& context, DeviceResources& resources, TextureDesc desc, const D3D12_RESOURCE_DESC& resourceDesc)
+        Texture(const Context& context, DeviceResources& resources, TextureDesc desc, const D3D12_RESOURCE_DESC1& resourceDesc)
             : TextureStateExtension(this->desc)
             , desc(std::move(desc))
             , resourceDesc(resourceDesc)
@@ -275,14 +310,16 @@ namespace nvrhi::d3d12
         const TextureDesc& getDesc() const override { return desc; }
 
         Object getNativeObject(ObjectType objectType) override;
-        Object getNativeView(ObjectType objectType, Format format, TextureSubresourceSet subresources, TextureDimension dimension, bool isReadOnlyDSV = false) override;
+        Object getNativeView(ObjectType objectType, Format format, TextureSubresourceSet subresources, TextureDimension dimension, bool isReadOnlyDSV = false,
+            std::optional<ComponentMapping> overrideComponentMapping = std::nullopt) override;
 
         void postCreate();
-        void createSRV(size_t descriptor, Format format, TextureDimension dimension, TextureSubresourceSet subresources) const;
+        void createSRV(size_t descriptor, Format format, TextureDimension dimension, TextureSubresourceSet subresources,
+            ComponentMapping componentMapping) const;
         void createUAV(size_t descriptor, Format format, TextureDimension dimension, TextureSubresourceSet subresources) const;
         void createRTV(size_t descriptor, Format format, TextureSubresourceSet subresources) const;
         void createDSV(size_t descriptor, TextureSubresourceSet subresources, bool isReadOnly = false) const;
-        DescriptorIndex getClearMipLevelUAV(uint32_t mipLevel);
+        DescriptorIndex getClearMipLevelUAV(uint32_t mipLevel, Format interpretFormat);
 
     private:
         const Context& m_Context;
@@ -301,7 +338,7 @@ namespace nvrhi::d3d12
         const BufferDesc desc;
         RefCountPtr<ID3D12Resource> resource;
         D3D12_GPU_VIRTUAL_ADDRESS gpuVA{};
-        D3D12_RESOURCE_DESC resourceDesc{};
+        D3D12_RESOURCE_DESC1 resourceDesc{};
 
         HeapHandle heap;
 
@@ -341,7 +378,7 @@ namespace nvrhi::d3d12
     {
     public:
         TextureDesc desc;
-        D3D12_RESOURCE_DESC resourceDesc{};
+        D3D12_RESOURCE_DESC1 resourceDesc{};
         RefCountPtr<Buffer> buffer;
         CpuAccessMode cpuAccess = CpuAccessMode::None;
         std::vector<UINT64> subresourceOffsets;
@@ -381,14 +418,14 @@ namespace nvrhi::d3d12
         const TextureDesc textureDesc; // used with state tracking
         RefCountPtr<ID3D12Resource> resource;
         TextureHandle pairedTexture;
+        DescriptorIndex clearDescriptorIndex = c_InvalidDescriptorIndex;
 
-        SamplerFeedbackTexture(const Context& context, DeviceResources& resources, SamplerFeedbackTextureDesc desc, TextureDesc textureDesc, ITexture* pairedTexture)
-            : desc(std::move(desc))
+        SamplerFeedbackTexture(const Context& context, SamplerFeedbackTextureDesc desc, TextureDesc textureDesc, ITexture* pairedTexture)
+            : TextureStateExtension(SamplerFeedbackTexture::textureDesc)
+            , desc(std::move(desc))
             , textureDesc(std::move(textureDesc))
-            , m_Context(context)
-            , m_Resources(resources)
             , pairedTexture(pairedTexture)
-            , TextureStateExtension(SamplerFeedbackTexture::textureDesc)
+            , m_Context(context)
         {
             TextureStateExtension::stateInitialized = true;
             TextureStateExtension::isSamplerFeedback = true;
@@ -403,7 +440,6 @@ namespace nvrhi::d3d12
 
     private:
         const Context& m_Context;
-        DeviceResources& m_Resources;
     };
 
     class Sampler : public RefCounter<ISampler>
@@ -643,6 +679,7 @@ namespace nvrhi::d3d12
     public:
         uint32_t capacity = 0;
         DescriptorIndex firstDescriptor = 0;
+        BindingLayoutHandle layout;
 
         DescriptorTable(DeviceResources& resources)
             : m_Resources(resources)
@@ -651,9 +688,12 @@ namespace nvrhi::d3d12
         ~DescriptorTable() override;
 
         const BindingSetDesc* getDesc() const override { return nullptr; }
-        IBindingLayout* getLayout() const override { return nullptr; }
+        IBindingLayout* getLayout() const override { return layout; }
         uint32_t getCapacity() const override { return capacity; }
         uint32_t getFirstDescriptorIndexInHeap() const override { return firstDescriptor; }
+        
+        bool isSamplerTable() const;
+        StaticDescriptorHeap& getDescriptorHeap() const;
 
     private:
         DeviceResources& m_Resources;
@@ -686,6 +726,16 @@ namespace nvrhi::d3d12
     };
 
     D3D12_RESOURCE_STATES convertResourceStates(ResourceStates stateBits);
+    
+    struct EnhancedResourceStateMapping
+    {
+        ResourceStates nvrhiState;
+        D3D12_BARRIER_SYNC sync;
+        D3D12_BARRIER_ACCESS access;
+        D3D12_BARRIER_LAYOUT layout;
+    };
+
+    EnhancedResourceStateMapping convertResourceStatesForEnhancedBarriers(ResourceStates state, bool isTexture);
     
     class BufferChunk
     {
@@ -796,18 +846,31 @@ namespace nvrhi::d3d12
         std::unordered_map<std::string, ExportTableEntry> exports;
         uint32_t maxLocalRootParameters = 0;
 
-        RayTracingPipeline(const Context& context)
+        RayTracingPipeline(const Context& context, Device* device)
             : m_Context(context)
+            , m_Device(device)
         { }
 
         const ExportTableEntry* getExport(const char* name);
         uint32_t getShaderTableEntrySize() const;
+        bool hasLocalResources() const { return maxLocalRootParameters != 0; }
 
         const rt::PipelineDesc& getDesc() const override { return desc; }
-        rt::ShaderTableHandle createShaderTable() override;
+        rt::ShaderTableHandle createShaderTable(rt::ShaderTableDesc const& stDesc) override;
 
     private:
         const Context& m_Context;
+        Device* m_Device;
+    };
+
+
+    class ShaderTableState
+    {
+    public:
+        uint32_t committedVersion = 0;
+        ID3D12DescriptorHeap* descriptorHeapSRV = nullptr;
+        ID3D12DescriptorHeap* descriptorHeapSamplers = nullptr;
+        D3D12_DISPATCH_RAYS_DESC dispatchRaysTemplate = {};
     };
 
     class ShaderTable : public RefCounter<rt::IShaderTable>
@@ -828,13 +891,23 @@ namespace nvrhi::d3d12
 
         uint32_t version = 0;
 
-        ShaderTable(const Context& context, RayTracingPipeline* _pipeline)
+        BufferHandle cache;
+        ShaderTableState cacheState;
+        
+        ShaderTable(const Context& context, RayTracingPipeline* _pipeline, rt::ShaderTableDesc const& desc)
             : pipeline(_pipeline)
             , m_Context(context)
+            , m_Desc(desc)
         { }
 
-        uint32_t getNumEntries() const;
-
+        size_t getUploadSize() const { return pipeline->getShaderTableEntrySize() * size_t(getNumEntries()); }
+        bool isStateValid(ShaderTableState const& state, DeviceResources const& resources) const;
+        void bake(uint8_t* cpuVA, D3D12_GPU_VIRTUAL_ADDRESS gpuVA, DeviceResources& resources,
+            ShaderTableState& state);
+        
+        rt::ShaderTableDesc const& getDesc() const override { return m_Desc; }
+        uint32_t getNumEntries() const override;
+        rt::IPipeline* getPipeline() const override { return pipeline; }
         void setRayGenerationShader(const char* exportName, IBindingSet* bindings = nullptr) override;
         int addMissShader(const char* exportName, IBindingSet* bindings = nullptr) override;
         int addHitGroup(const char* exportName, IBindingSet* bindings = nullptr) override;
@@ -842,39 +915,51 @@ namespace nvrhi::d3d12
         void clearMissShaders() override;
         void clearHitShaders() override;
         void clearCallableShaders() override;
-        rt::IPipeline* getPipeline() override;
 
     private:
         const Context& m_Context;
+        rt::ShaderTableDesc const m_Desc;
 
         bool verifyExport(const RayTracingPipeline::ExportTableEntry* pExport, IBindingSet* bindings) const;
     };
 
-
-    class ShaderTableState
-    {
-    public:
-        uint32_t committedVersion = 0;
-        ID3D12DescriptorHeap* descriptorHeapSRV = nullptr;
-        ID3D12DescriptorHeap* descriptorHeapSamplers = nullptr;
-        D3D12_DISPATCH_RAYS_DESC dispatchRaysTemplate = {};
-    };
 
     class Queue
     {
     public:
         RefCountPtr<ID3D12CommandQueue> queue;
         RefCountPtr<ID3D12Fence> fence;
-        uint64_t lastSubmittedInstance = 0;
-        uint64_t lastCompletedInstance = 0;
-        std::atomic<uint64_t> recordingInstance = 1;
-        std::deque<std::shared_ptr<class CommandListInstance>> commandListsInFlight;
+        CommandListLifetimeTrackerHandle lifetimeTracker;
 
-        explicit Queue(const Context& context, ID3D12CommandQueue* queue);
+        std::atomic<uint64_t> lastSubmittedInstance = 0;
+        std::atomic<uint64_t> lastCompletedInstance = 0;
+        std::atomic<uint64_t> recordingInstance = 1;
+
+        explicit Queue(const Context& context, ID3D12CommandQueue* queue, CommandListLifetimeTrackerHandle&& lifetimeTracker);
         uint64_t updateLastCompletedInstance();
+        uint64_t Signal();
 
     private:
         const Context& m_Context;
+    };
+
+    class CommandListLifetimeTracker final : public RefCounter<ICommandListLifetimeTracker>
+    {
+    public:
+        CommandListLifetimeTracker(Device* device, const Context& context, DeviceResources& resources, CommandQueue executionQueue);
+
+        // ICommandListTracker implementation
+        virtual void runGarbageCollection() override;
+
+        // D3D12 specific methods
+        void push(std::shared_ptr<class CommandListInstance> commandList);
+
+    private:
+        Device* m_Device;
+        const Context& m_Context;
+        DeviceResources& m_Resources;
+        CommandQueue m_ExecutionQueue;
+        std::deque<std::shared_ptr<class CommandListInstance>> m_CommandListsInFlight;
     };
     
     class InternalCommandList
@@ -884,6 +969,10 @@ namespace nvrhi::d3d12
         RefCountPtr<ID3D12GraphicsCommandList> commandList;
         RefCountPtr<ID3D12GraphicsCommandList4> commandList4;
         RefCountPtr<ID3D12GraphicsCommandList6> commandList6;
+        RefCountPtr<ID3D12GraphicsCommandList7> commandList7;
+#if NVRHI_D3D12_WITH_COOP_VECTOR_COMMON
+        RefCountPtr<ID3D12GraphicsCommandListPreview> commandListPreview;
+#endif
         uint64_t lastSubmittedInstance = 0;
 #if NVRHI_WITH_AFTERMATH
         GFSDK_Aftermath_ContextHandle aftermathContext;
@@ -957,6 +1046,7 @@ namespace nvrhi::d3d12
         void drawIndexed(const DrawArguments& args) override;
         void drawIndirect(uint32_t offsetBytes, uint32_t drawCount) override;
         void drawIndexedIndirect(uint32_t offsetBytes, uint32_t drawCount) override;
+        void drawIndexedIndirectCount(uint32_t paramOffsetBytes, uint32_t countOffsetBytes, uint32_t maxDrawCount) override;
 
         void setComputeState(const ComputeState& state) override;
         void dispatch(uint32_t groupsX, uint32_t groupsY = 1, uint32_t groupsZ = 1) override;
@@ -964,6 +1054,8 @@ namespace nvrhi::d3d12
 
         void setMeshletState(const MeshletState& state) override;
         void dispatchMesh(uint32_t groupsX, uint32_t groupsY = 1, uint32_t groupsZ = 1) override;
+        void dispatchMeshIndirect(uint32_t offsetBytes, uint32_t maxDrawCount) override;
+        void dispatchMeshIndirectCount(uint32_t paramOffsetBytes, uint32_t countOffsetBytes, uint32_t maxDrawCount) override;
 
         void setRayTracingState(const rt::State& state) override;
         void dispatchRays(const rt::DispatchRaysArguments& args) override;
@@ -971,10 +1063,13 @@ namespace nvrhi::d3d12
         void buildOpacityMicromap(rt::IOpacityMicromap* omm, const rt::OpacityMicromapDesc& desc) override;
         void buildBottomLevelAccelStruct(rt::IAccelStruct* as, const rt::GeometryDesc* pGeometries, size_t numGeometries, rt::AccelStructBuildFlags buildFlags) override;
         void compactBottomLevelAccelStructs() override;
+        void copyRaytracingAccelerationStructure(rt::IAccelStruct* destination, rt::IAccelStruct* source) override;
         void buildTopLevelAccelStruct(rt::IAccelStruct* as, const rt::InstanceDesc* pInstances, size_t numInstances, rt::AccelStructBuildFlags buildFlags) override;
         void buildTopLevelAccelStructFromBuffer(rt::IAccelStruct* as, nvrhi::IBuffer* instanceBuffer, uint64_t instanceBufferOffset, size_t numInstances,
             rt::AccelStructBuildFlags buildFlags = rt::AccelStructBuildFlags::None) override;
-        void executeMultiIndirectClusterOperation(const rt::cluster::OperationDesc& desc);
+        void executeMultiIndirectClusterOperation(const rt::cluster::OperationDesc& desc) override;
+
+        void convertCoopVecMatrices(coopvec::ConvertMatrixLayoutDesc const* convertDescs, size_t numDescs) override;
 
         void beginTimerQuery(ITimerQuery* query) override;
         void endTimerQuery(ITimerQuery* query) override;
@@ -1015,8 +1110,22 @@ namespace nvrhi::d3d12
 
         void updateGraphicsVolatileBuffers() override;
         void updateComputeVolatileBuffers() override;
-        void setComputeBindings(const BindingSetVector& bindings, uint32_t bindingUpdateMask, IBuffer* indirectParams, bool updateIndirectParams, const RootSignature* rootSignature);
-        void setGraphicsBindings(const BindingSetVector& bindings, uint32_t bindingUpdateMask, IBuffer* indirectParams, bool updateIndirectParams, const RootSignature* rootSignature);
+
+        void setComputeBindings(
+            const BindingSetVector& bindings,
+            uint32_t bindingUpdateMask,
+            IBuffer* indirectParams,
+            bool updateIndirectParams,
+            const RootSignature* rootSignature);
+
+        void setGraphicsBindings(
+            const BindingSetVector& bindings,
+            uint32_t bindingUpdateMask,
+            IBuffer* indirectParams,
+            bool updateIndirectParams,
+            IBuffer* indirectCountBuffer,
+            bool updateIndirectCountBuffer,
+            const RootSignature* rootSignature);
         
     private:
         const Context& m_Context;
@@ -1029,8 +1138,9 @@ namespace nvrhi::d3d12
             D3D12_GPU_VIRTUAL_ADDRESS address;
         };
         
-        IDevice* m_Device;
+        Device* m_Device;
         Queue* m_Queue;
+        CommandListLifetimeTrackerHandle m_LifetimeTracker;
         UploadManager m_UploadManager;
         UploadManager m_DxrScratchManager;
         CommandListResourceStateTracker m_StateTracker;
@@ -1056,6 +1166,7 @@ namespace nvrhi::d3d12
         bool m_CurrentComputeStateValid = false;
         bool m_CurrentMeshletStateValid = false;
         bool m_CurrentRayTracingStateValid = false;
+        bool m_BindingStatesDirty = false;
 
         // Cache for internal state
 
@@ -1067,7 +1178,10 @@ namespace nvrhi::d3d12
         std::unordered_map<IBuffer*, D3D12_GPU_VIRTUAL_ADDRESS> m_VolatileConstantBufferAddresses;
         bool m_AnyVolatileBufferWrites = false;
 
-        std::vector<D3D12_RESOURCE_BARRIER> m_D3DBarriers; // Used locally in commitBarriers, member to avoid re-allocations
+        // The barrier vectors are only used locally in commitBarriers. They are class members to avoid re-allocations.
+        std::vector<D3D12_RESOURCE_BARRIER> m_D3DBarriers;
+        std::vector<D3D12_TEXTURE_BARRIER> m_D3DTextureBarriers;
+        std::vector<D3D12_BUFFER_BARRIER> m_D3DBufferBarriers;
 
         // Bound volatile buffer state. Saves currently bound volatile buffers and their current GPU VAs.
         // Necessary to patch the bound VAs when a buffer is updated between setGraphicsState and draw, or between draws.
@@ -1075,8 +1189,8 @@ namespace nvrhi::d3d12
         static_vector<VolatileConstantBufferBinding, c_MaxVolatileConstantBuffers> m_CurrentGraphicsVolatileCBs;
         static_vector<VolatileConstantBufferBinding, c_MaxVolatileConstantBuffers> m_CurrentComputeVolatileCBs;
 
-        std::unordered_map<rt::IShaderTable*, std::unique_ptr<ShaderTableState>> m_ShaderTableStates;
-        ShaderTableState* getShaderTableStateTracking(rt::IShaderTable* shaderTable);
+        std::unordered_map<rt::IShaderTable*, std::unique_ptr<ShaderTableState>> m_UncachedShaderTableStates;
+        ShaderTableState& getShaderTableState(rt::IShaderTable* shaderTable);
         
         void clearStateCache();
 
@@ -1151,9 +1265,13 @@ namespace nvrhi::d3d12
 
         FramebufferHandle createFramebuffer(const FramebufferDesc& desc) override;
         
+        GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, FramebufferInfo const& fbinfo) override;
+        
         GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, IFramebuffer* fb) override;
         
         ComputePipelineHandle createComputePipeline(const ComputePipelineDesc& desc) override;
+
+        MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, FramebufferInfo const& fbinfo) override;
 
         MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, IFramebuffer* fb) override;
 
@@ -1179,9 +1297,14 @@ namespace nvrhi::d3d12
         uint64_t executeCommandLists(nvrhi::ICommandList* const* pCommandLists, size_t numCommandLists, CommandQueue executionQueue = CommandQueue::Graphics) override;
         void queueWaitForCommandList(CommandQueue waitQueue, CommandQueue executionQueue, uint64_t instance) override;
         bool waitForIdle() override;
+        CommandListLifetimeTrackerHandle createCommandListLifetimeTracker(CommandQueue executionQueue) override;
         void runGarbageCollection() override;
         bool queryFeatureSupport(Feature feature, void* pInfo = nullptr, size_t infoSize = 0) override;
         FormatSupport queryFormatSupport(Format format) override;
+        coopvec::DeviceFeatures queryCoopVecFeatures() override;
+        coopvec::MatMulFormatSupport queryCoopVecMatMulFormatSupport(const coopvec::MatMulFormatCombo& combination) override;
+        coopvec::TrainingFormatSupport queryCoopVecTrainingFormatSupport(coopvec::DataType componentType) override;
+        size_t getCoopVecMatrixSize(coopvec::DataType type, coopvec::MatrixLayout layout, int rows, int columns) override;
         Object getNativeQueue(ObjectType objectType, CommandQueue queue) override;
         IMessageCallback* getMessageCallback() override { return m_Context.messageCallback; }
         bool isAftermathEnabled() override { return m_AftermathEnabled; }
@@ -1204,6 +1327,10 @@ namespace nvrhi::d3d12
         bool GetAccelStructPreBuildInfo(D3D12_RAYTRACING_ACCELERATION_STRUCTURE_PREBUILD_INFO& outPreBuildInfo, const rt::AccelStructDesc& desc) const;
 
         bool GetNvapiIsInitialized() const { return m_NvapiIsInitialized; }
+        bool GetOpacityMicromapSupported() const { return m_OpacityMicromapSupported; }
+        bool GetLinearSweptSpheresSupported( ) const { return m_LinearSweptSpheresSupported; }
+        bool GetEnhancedBarriersSupported() const { return m_EnhancedBarriersSupported; }
+
     private:
         Context m_Context;
         DeviceResources m_Resources;
@@ -1213,10 +1340,9 @@ namespace nvrhi::d3d12
 
         std::mutex m_Mutex;
 
-        std::vector<ID3D12CommandList*> m_CommandListsToExecute; // used locally in executeCommandLists, member to avoid re-allocations
-        
         bool m_NvapiIsInitialized = false;
         bool m_SinglePassStereoSupported = false;
+        bool m_HlslExtensionsSupported = false;
         bool m_FastGeometryShaderSupported = false;
         bool m_RayTracingSupported = false;
         bool m_TraceRayInlineSupported = false;
@@ -1228,15 +1354,26 @@ namespace nvrhi::d3d12
         bool m_SpheresSupported = false;
         bool m_ShaderExecutionReorderingSupported = false;
         bool m_SamplerFeedbackSupported = false;
+        bool m_EnhancedBarriersSupported = false;
         bool m_AftermathEnabled = false;
+        bool m_RayTracingValidationEnabled = false;
+        void* m_RayTracingValidationCallbackHandle = nullptr;
         bool m_HeapDirectlyIndexedEnabled = false;
+#if NVRHI_D3D12_WITH_LINALG
+        bool m_LinearAlgebraSupported = false;
+#else
+        bool m_CoopVecInferencingSupported = false;
+        bool m_CoopVecTrainingSupported = false;
+#endif
         AftermathCrashDumpHelper m_AftermathCrashDumpHelper;
 
 
         D3D12_FEATURE_DATA_D3D12_OPTIONS  m_Options = {};
+        D3D12_FEATURE_DATA_D3D12_OPTIONS1 m_Options1 = {};
         D3D12_FEATURE_DATA_D3D12_OPTIONS5 m_Options5 = {};
         D3D12_FEATURE_DATA_D3D12_OPTIONS6 m_Options6 = {};
         D3D12_FEATURE_DATA_D3D12_OPTIONS7 m_Options7 = {};
+        D3D12_FEATURE_DATA_D3D12_OPTIONS12 m_Options12 = {};
 
         RefCountPtr<RootSignature> getRootSignature(const static_vector<BindingLayoutHandle, c_MaxBindingLayouts>& pipelineLayouts, bool allowInputLayout);
         RefCountPtr<ID3D12PipelineState> createPipelineState(const GraphicsPipelineDesc& desc, RootSignature* pRS, const FramebufferInfo& fbinfo) const;

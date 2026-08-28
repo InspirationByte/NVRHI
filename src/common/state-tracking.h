@@ -138,4 +138,9 @@ namespace nvrhi
 
     bool verifyPermanentResourceState(ResourceStates permanentState, ResourceStates requiredState, bool isTexture, const std::string& debugName, IMessageCallback* messageCallback);
 
+    // Derives the state for SRV type resources used in binding sets.
+    // We don't want to include the PixelShaderResource bit everywhere because it cannot be used in a compute queue.
+    // So, use the binding layout's visibility mask to determine if a pixel shader might be necessary.
+    ResourceStates getShaderResourceStateForBindingLayout(IBindingLayout* bindingLayout);
+
 } // namespace nvrhi

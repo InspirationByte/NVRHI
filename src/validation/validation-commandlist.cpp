@@ -467,6 +467,21 @@ namespace nvrhi::validation
         m_CommandList->copyBuffer(dest, destOffsetBytes, src, srcOffsetBytes, dataSizeBytes);
     }
 
+    void CommandListWrapper::clearSamplerFeedbackTexture(ISamplerFeedbackTexture* texture)
+    {
+        m_CommandList->clearSamplerFeedbackTexture(texture);
+    }
+
+    void CommandListWrapper::decodeSamplerFeedbackTexture(IBuffer* buffer, ISamplerFeedbackTexture* texture, nvrhi::Format format)
+    {
+        m_CommandList->decodeSamplerFeedbackTexture(buffer, texture, format);
+    }
+
+    void CommandListWrapper::setSamplerFeedbackTextureState(ISamplerFeedbackTexture* texture, ResourceStates stateBits)
+    {
+        m_CommandList->setSamplerFeedbackTextureState(texture, stateBits);
+    }
+
     bool CommandListWrapper::validateBindingSetsAgainstLayouts(const static_vector<BindingLayoutHandle, c_MaxBindingLayouts>& layouts, const static_vector<IBindingSet*, c_MaxBindingLayouts>& sets) const
     {
         if (layouts.size() != sets.size())
@@ -747,6 +762,39 @@ namespace nvrhi::validation
         m_CommandList->drawIndexedIndirect(offsetBytes, drawCount);
     }
 
+    void CommandListWrapper::drawIndexedIndirectCount(uint32_t paramOffsetBytes, uint32_t countOffsetBytes, uint32_t maxDrawCount)
+    {
+        if (!requireOpenState())
+            return;
+
+        if (!requireType(CommandQueue::Graphics, "drawIndexedIndirectCount"))
+            return;
+
+        if (!m_GraphicsStateSet)
+        {
+            error("Graphics state is not set before a drawIndexedIndirectCount call.\n"
+                "Note that setting compute state invalidates the graphics state.");
+            return;
+        }
+
+        if (!m_CurrentGraphicsState.indirectParams)
+        {
+            error("Indirect params buffer is not set before a drawIndexedIndirectCount call.");
+            return;
+        }
+
+        if (!m_CurrentGraphicsState.indirectCountBuffer)
+        {
+            error("Indirect count buffer is not set before a drawIndexedIndirectCount call.");
+            return;
+        }
+
+        if (!validatePushConstants("graphics", "setGraphicsState"))
+            return;
+
+        m_CommandList->drawIndexedIndirectCount(paramOffsetBytes, countOffsetBytes, maxDrawCount);
+    }
+
     void CommandListWrapper::setComputeState(const ComputeState& state)
     {
         if (!requireOpenState())
@@ -901,6 +949,66 @@ namespace nvrhi::validation
             return;
 
         m_CommandList->dispatchMesh(groupsX, groupsY, groupsZ);
+    }
+
+    void CommandListWrapper::dispatchMeshIndirect(uint32_t offsetBytes, uint32_t maxDrawCount)
+    {
+        if (!requireOpenState())
+            return;
+
+        if (!requireType(CommandQueue::Graphics, "dispatchMesh"))
+            return;
+
+        if (!m_MeshletStateSet)
+        {
+            error("Meshlet state is not set before a dispatchMesh call.\n"
+                "Note that setting graphics or compute state invalidates the meshlet state.");
+            return;
+        }
+
+        if (!validatePushConstants("meshlet", "setMeshletState"))
+            return;
+
+        if (!m_CurrentMeshletState.indirectParams)
+        {
+            error("Indirect params buffer is not set before a dispatchMeshIndirect call.");
+            return;
+        }
+
+        m_CommandList->dispatchMeshIndirect(offsetBytes, maxDrawCount);
+    }
+
+    void CommandListWrapper::dispatchMeshIndirectCount(uint32_t paramOffsetBytes, uint32_t countOffsetBytes, uint32_t maxDrawCount)
+    {
+        if (!requireOpenState())
+            return;
+
+        if (!requireType(CommandQueue::Graphics, "dispatchMesh"))
+            return;
+
+        if (!m_MeshletStateSet)
+        {
+            error("Meshlet state is not set before a dispatchMesh call.\n"
+                "Note that setting graphics or compute state invalidates the meshlet state.");
+            return;
+        }
+
+        if (!validatePushConstants("meshlet", "setMeshletState"))
+            return;
+
+        if (!m_CurrentMeshletState.indirectParams)
+        {
+            error("Indirect params buffer is not set before a dispatchMeshIndirectCount call.");
+            return;
+        }
+
+        if (!m_CurrentMeshletState.indirectCountBuffer)
+        {
+            error("Indirect count buffer is not set before a dispatchMeshIndirectCount call.");
+            return;
+        }
+
+        m_CommandList->dispatchMeshIndirectCount(paramOffsetBytes, countOffsetBytes, maxDrawCount);
     }
 
     void CommandListWrapper::beginTimerQuery(ITimerQuery* query)
@@ -1127,6 +1235,32 @@ namespace nvrhi::validation
             return;
 
         m_CommandList->compactBottomLevelAccelStructs();
+    }
+
+    void CommandListWrapper::copyRaytracingAccelerationStructure(rt::IAccelStruct* destination, rt::IAccelStruct* source)
+    {
+        if (!requireOpenState())
+            return;
+
+        if (!requireType(CommandQueue::Compute, "copyRaytracingAccelerationStructure"))
+            return;
+
+        rt::IAccelStruct* underlyingDst = destination;
+        rt::IAccelStruct* underlyingSrc = source;
+
+        AccelStructWrapper* dstWrapper = dynamic_cast<AccelStructWrapper*>(destination);
+        if (dstWrapper)
+        {
+            underlyingDst = dstWrapper->getUnderlyingObject();
+        }
+
+        AccelStructWrapper* srcWrapper = dynamic_cast<AccelStructWrapper*>(source);
+        if (srcWrapper)
+        {
+            underlyingSrc = srcWrapper->getUnderlyingObject();
+        }
+
+        m_CommandList->copyRaytracingAccelerationStructure(underlyingDst, underlyingSrc);
     }
 
     void CommandListWrapper::buildOpacityMicromap(rt::IOpacityMicromap* omm, const rt::OpacityMicromapDesc& desc) 
@@ -1787,6 +1921,56 @@ namespace nvrhi::validation
         }
 
         m_CommandList->executeMultiIndirectClusterOperation(desc);
+    }
+
+    void CommandListWrapper::convertCoopVecMatrices(coopvec::ConvertMatrixLayoutDesc const* convertDescs, size_t numDescs)
+    {
+        if (!m_Device->queryFeatureSupport(Feature::CooperativeVectorInferencing))
+        {
+            error("convertCoopVecMatrices: Cooperative Vectors are not supported by the device");
+            return;
+        }
+
+        for (size_t i = 0; i < numDescs; i++)
+        {
+            coopvec::ConvertMatrixLayoutDesc const& desc = convertDescs[i];
+
+            if (desc.src.buffer == nullptr)
+            {
+                std::stringstream ss;
+                ss << "convertCoopVecMatrices: src.buffer is NULL for convertDescs[" << i << "]";
+                error(ss.str());
+                return;
+            }
+
+            if (desc.dst.buffer == nullptr)
+            {
+                std::stringstream ss;
+                ss << "convertCoopVecMatrices: dst.buffer is NULL for convertDescs[" << i << "]";
+                error(ss.str());
+                return;
+            }
+
+            if (!desc.dst.buffer->getDesc().canHaveUAVs && m_Device->getGraphicsAPI() == GraphicsAPI::D3D12)
+            {
+                std::stringstream ss;
+                ss << "convertCoopVecMatrices: dst.buffer " << utils::DebugNameToString(desc.dst.buffer->getDesc().debugName)
+                    << " does not have the canHaveUAVs flag set for convertDescs[" << i << "]";
+                error(ss.str());
+                return;
+            }
+
+            if (desc.src.size == 0 || desc.dst.size == 0)
+            {
+                std::stringstream ss;
+                ss << "convertCoopVecMatrices: src.size (" << desc.src.size << ") and dst.size (" 
+                    << desc.dst.size << ") must be non-zero for convertDescs[" << i << "]";
+                error(ss.str());
+                return;
+            }
+        }
+
+        m_CommandList->convertCoopVecMatrices(convertDescs, numDescs);
     }
 
     void CommandListWrapper::evaluatePushConstantSize(const nvrhi::BindingLayoutVector& bindingLayouts)

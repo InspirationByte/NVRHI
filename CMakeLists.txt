@@ -20,7 +20,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.11)
 
 project(nvrhi VERSION 1.0.0)
 
@@ -42,33 +42,155 @@ cmake_dependent_option(NVRHI_WITH_NVAPI "Include NVAPI support (requires NVAPI S
 cmake_dependent_option(NVRHI_WITH_DX11 "Build the NVRHI D3D11 backend" ON "WIN32" OFF)
 cmake_dependent_option(NVRHI_WITH_DX12 "Build the NVRHI D3D12 backend" ON "WIN32" OFF)
 
+if(NVRHI_WITH_VULKAN)
+    option(NVRHI_FETCH_VULKAN_HEADERS "Fetch Vulkan-Headers when building the Vulkan backend and no external targets are provided" ON)
+    set(NVRHI_VULKAN_HEADERS_GIT_REPOSITORY "https://github.com/KhronosGroup/Vulkan-Headers.git" CACHE STRING "Vulkan-Headers git repository used by NVRHI_FETCH_VULKAN_HEADERS")
+    set(NVRHI_VULKAN_HEADERS_GIT_TAG "v1.4.352" CACHE STRING "Vulkan-Headers git tag or commit used by NVRHI_FETCH_VULKAN_HEADERS")
+    set(NVRHI_VULKAN_HEADERS_FETCH_DIR "" CACHE STRING "Source directory for fetched Vulkan-Headers; empty uses CMake FetchContent default")
+endif()
+
+if(NVRHI_WITH_DX12)
+    option(NVRHI_D3D12_WITH_DXR12_OPACITY_MICROMAP "Use D3D12 native Opacity Micromaps from DXR 1.2" OFF)
+    option(NVRHI_FETCH_DIRECTX_HEADERS "Fetch DirectX-Headers when building the D3D12 backend and no external targets are provided" ON)
+    set(NVRHI_DIRECTX_HEADERS_GIT_REPOSITORY "https://github.com/microsoft/DirectX-Headers.git" CACHE STRING "DirectX-Headers git repository used by NVRHI_FETCH_DIRECTX_HEADERS")
+    set(NVRHI_DIRECTX_HEADERS_GIT_TAG "v1.717.0-preview" CACHE STRING "DirectX-Headers git tag or commit used by NVRHI_FETCH_DIRECTX_HEADERS")
+    set(NVRHI_DIRECTX_HEADERS_FETCH_DIR "" CACHE STRING "Source directory for fetched DirectX-Headers; empty uses CMake FetchContent default")
+endif()
+
+if(NVRHI_WITH_RTXMU)
+    set(NVRHI_RTXMU_GIT_REPOSITORY "https://github.com/NVIDIA-RTX/RTXMU.git" CACHE STRING "RTXMU git repository")
+    set(NVRHI_RTXMU_GIT_TAG "v1.4" CACHE STRING "RTXMU git tag or commit")
+    set(NVRHI_RTXMU_FETCH_DIR "" CACHE STRING "Source directory for fetched RTXMU; empty uses CMake FetchContent default")
+endif()
+
 if (NVRHI_BUILD_SHARED)
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 endif()
 
 if (MSVC)
     string(REGEX REPLACE "/W[0-4]\\s*" "" CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS}")
-    string(APPEND CMAKE_CXX_FLAGS " /W4 /MP")
+    string(APPEND CMAKE_CXX_FLAGS " /W4")
+    if (NOT (CMAKE_CXX_COMPILER_ID MATCHES "Clang"))
+        string(APPEND CMAKE_CXX_FLAGS " /MP")
+    endif()
 endif()
 
 
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
-if (NVRHI_WITH_VULKAN AND NOT TARGET Vulkan-Headers AND NOT TARGET Vulkan::Headers)
-    add_subdirectory(thirdparty/Vulkan-Headers)
+if(NVRHI_WITH_VULKAN)
+    set(nvrhi_vulkan_headers_target "")
+
+    if(TARGET Vulkan::Headers)
+        set(nvrhi_vulkan_headers_target Vulkan::Headers)
+    elseif(TARGET Vulkan-Headers)
+        set(nvrhi_vulkan_headers_target Vulkan-Headers)
+    endif()
+
+    if((NOT nvrhi_vulkan_headers_target) AND NVRHI_FETCH_VULKAN_HEADERS)
+        include(FetchContent)
+
+        message(STATUS "Fetching Vulkan-Headers from ${NVRHI_VULKAN_HEADERS_GIT_REPOSITORY}, tag ${NVRHI_VULKAN_HEADERS_GIT_TAG}")
+
+        if(NVRHI_VULKAN_HEADERS_FETCH_DIR)
+            FetchContent_Declare(
+                vulkan_headers
+                GIT_REPOSITORY ${NVRHI_VULKAN_HEADERS_GIT_REPOSITORY}
+                GIT_TAG ${NVRHI_VULKAN_HEADERS_GIT_TAG}
+                SOURCE_DIR ${NVRHI_VULKAN_HEADERS_FETCH_DIR})
+        else()
+            FetchContent_Declare(
+                vulkan_headers
+                GIT_REPOSITORY ${NVRHI_VULKAN_HEADERS_GIT_REPOSITORY}
+                GIT_TAG ${NVRHI_VULKAN_HEADERS_GIT_TAG})
+        endif()
+
+        FetchContent_MakeAvailable(vulkan_headers)
+
+        if(TARGET Vulkan::Headers)
+            set(nvrhi_vulkan_headers_target Vulkan::Headers)
+        elseif(TARGET Vulkan-Headers)
+            set(nvrhi_vulkan_headers_target Vulkan-Headers)
+        endif()
+    endif()
+
+    if(NOT nvrhi_vulkan_headers_target)
+        message(FATAL_ERROR "NVRHI Vulkan backend requires Vulkan-Headers CMake target (Vulkan::Headers or Vulkan-Headers), or enable NVRHI_FETCH_VULKAN_HEADERS.")
+    endif()
+endif()
+
+if(NVRHI_WITH_DX12)
+    set(nvrhi_directx_headers_target "")
+    set(nvrhi_directx_guids_target "")
+
+    if(TARGET Microsoft::DirectX-Headers)
+        set(nvrhi_directx_headers_target Microsoft::DirectX-Headers)
+    elseif(TARGET DirectX-Headers)
+        set(nvrhi_directx_headers_target DirectX-Headers)
+    endif()
+
+    if(TARGET Microsoft::DirectX-Guids)
+        set(nvrhi_directx_guids_target Microsoft::DirectX-Guids)
+    elseif(TARGET DirectX-Guids)
+        set(nvrhi_directx_guids_target DirectX-Guids)
+    endif()
+
+    if((NOT nvrhi_directx_headers_target OR NOT nvrhi_directx_guids_target) AND NVRHI_FETCH_DIRECTX_HEADERS)
+        include(FetchContent)
+
+        message(STATUS "Fetching DirectX-Headers from ${NVRHI_DIRECTX_HEADERS_GIT_REPOSITORY}, tag ${NVRHI_DIRECTX_HEADERS_GIT_TAG}")
+
+        if(NVRHI_DIRECTX_HEADERS_FETCH_DIR)
+            FetchContent_Declare(
+                directx_headers
+                GIT_REPOSITORY ${NVRHI_DIRECTX_HEADERS_GIT_REPOSITORY}
+                GIT_TAG ${NVRHI_DIRECTX_HEADERS_GIT_TAG}
+                SOURCE_DIR ${NVRHI_DIRECTX_HEADERS_FETCH_DIR})
+        else()
+            FetchContent_Declare(
+                directx_headers
+                GIT_REPOSITORY ${NVRHI_DIRECTX_HEADERS_GIT_REPOSITORY}
+                GIT_TAG ${NVRHI_DIRECTX_HEADERS_GIT_TAG})
+        endif()
+
+        FetchContent_MakeAvailable(directx_headers)
+
+        if(TARGET Microsoft::DirectX-Headers)
+            set(nvrhi_directx_headers_target Microsoft::DirectX-Headers)
+        endif()
+
+        if(TARGET Microsoft::DirectX-Guids)
+            set(nvrhi_directx_guids_target Microsoft::DirectX-Guids)
+        endif()
+    endif()
+
+    if(NOT nvrhi_directx_headers_target OR NOT nvrhi_directx_guids_target)
+        message(FATAL_ERROR "NVRHI D3D12 requires DirectX-Headers and DirectX-Guids CMake targets. Provide Microsoft::DirectX-Headers and Microsoft::DirectX-Guids, or enable NVRHI_FETCH_DIRECTX_HEADERS.")
+    endif()
 endif()
 
 if (NVRHI_WITH_RTXMU)
-    if (TARGET Vulkan-Headers)
-        get_target_property(RTXMU_VULKAN_INCLUDE_DIR Vulkan-Headers INTERFACE_INCLUDE_DIRECTORIES)
-    elseif (TARGET Vulkan::Headers)
-        get_target_property(RTXMU_VULKAN_INCLUDE_DIR Vulkan::Headers INTERFACE_INCLUDE_DIRECTORIES)
-    endif()
-
+    get_target_property(RTXMU_VULKAN_INCLUDE_DIR ${nvrhi_vulkan_headers_target} INTERFACE_INCLUDE_DIRECTORIES)
+    
     option(RTXMU_WITH_VULKAN "" ${NVRHI_WITH_VULKAN})
     option(RTXMU_WITH_D3D12 "" ${NVRHI_WITH_DX12})
 
-    add_subdirectory(rtxmu)
+    message(STATUS "Fetching RTXMU from ${NVRHI_RTXMU_GIT_REPOSITORY}, tag ${NVRHI_RTXMU_GIT_TAG}")
+
+    if(NVRHI_RTXMU_FETCH_DIR)
+        FetchContent_Declare(
+            rtxmu
+            GIT_REPOSITORY ${NVRHI_RTXMU_GIT_REPOSITORY}
+            GIT_TAG ${NVRHI_RTXMU_GIT_TAG}
+            SOURCE_DIR ${NVRHI_RTXMU_FETCH_DIR})
+    else()
+        FetchContent_Declare(
+            rtxmu
+            GIT_REPOSITORY ${NVRHI_RTXMU_GIT_REPOSITORY}
+            GIT_TAG ${NVRHI_RTXMU_GIT_TAG})
+    endif()
+
+    FetchContent_MakeAvailable(rtxmu)
 endif()
 
 if (NVRHI_WITH_NVAPI AND NOT TARGET nvapi)
@@ -113,9 +235,7 @@ set(include_validation
 set(src_validation
     src/validation/validation-commandlist.cpp
     src/validation/validation-device.cpp
-    src/validation/validation-backend.h
-    src/common/sparse-bitset.h
-    src/common/sparse-bitset.cpp)
+    src/validation/validation-backend.h)
 
 set(include_d3d11
     include/nvrhi/d3d11.h)
@@ -273,7 +393,9 @@ if (NVRHI_WITH_DX12)
         target_link_libraries(${nvrhi_d3d12_target} PUBLIC rtxmu)
     endif()
 
-    target_link_libraries(${nvrhi_d3d12_target} PUBLIC d3d12 dxguid)
+    target_compile_definitions(${nvrhi_d3d12_target} PRIVATE NVRHI_D3D12_WITH_DXR12_OPACITY_MICROMAP=$<BOOL:${NVRHI_D3D12_WITH_DXR12_OPACITY_MICROMAP}>)
+
+    target_link_libraries(${nvrhi_d3d12_target} PUBLIC ${nvrhi_directx_headers_target} ${nvrhi_directx_guids_target} d3d12)
 
     if (NVRHI_WITH_NVAPI)
         target_link_libraries(${nvrhi_d3d12_target} PUBLIC nvapi)
@@ -314,11 +436,7 @@ if (NVRHI_WITH_VULKAN)
         target_link_libraries(${nvrhi_vulkan_target} PUBLIC rtxmu)
     endif()
 
-    if (TARGET Vulkan-Headers)
-        target_link_libraries(${nvrhi_vulkan_target} PRIVATE Vulkan-Headers)
-    elseif (TARGET Vulkan::Headers)
-        target_link_libraries(${nvrhi_vulkan_target} PRIVATE Vulkan::Headers)
-    endif()
+    target_link_libraries(${nvrhi_vulkan_target} PRIVATE ${nvrhi_vulkan_headers_target})
 
     if (NVRHI_WITH_AFTERMATH)
         target_link_libraries(${nvrhi_vulkan_target} PUBLIC aftermath)

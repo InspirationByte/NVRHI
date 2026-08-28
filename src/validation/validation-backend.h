@@ -23,7 +23,7 @@
 #pragma once
 
 #include <nvrhi/validation.h>
-#include "../common/sparse-bitset.h"
+#include <unordered_set>
 
 namespace nvrhi::validation
 {
@@ -39,12 +39,59 @@ namespace nvrhi::validation
         [[nodiscard]] bool overlapsWith(const Range& other) const;
     };
 
-    struct ShaderBindingSet
+    enum class GraphicsResourceType : uint32_t
     {
-        sparse_bitset SRV;
-        sparse_bitset Sampler;
-        sparse_bitset UAV;
-        sparse_bitset CB;
+        SRV,
+        Sampler,
+        UAV,
+        CB
+    };
+
+    struct BindingLocation
+    {
+        GraphicsResourceType type = GraphicsResourceType::SRV;
+        uint32_t registerSpace = 0;
+        uint32_t slot = 0;
+        uint32_t arrayElement = 0;
+
+        bool operator==(BindingLocation const& other) const
+        {
+            return type == other.type
+                && registerSpace == other.registerSpace
+                && slot == other.slot
+                && arrayElement == other.arrayElement;
+        }
+
+        bool operator!=(BindingLocation const& other) const
+        {
+            return !(*this == other);
+        }
+    };
+} // namespace nvrhi::validation
+
+namespace std
+{
+    template<> struct hash<nvrhi::validation::BindingLocation>
+    {
+        std::size_t operator()(nvrhi::validation::BindingLocation const& s) const noexcept
+        {
+            size_t hash = 0;
+            nvrhi::hash_combine(hash, uint32_t(s.type));
+            nvrhi::hash_combine(hash, s.registerSpace);
+            nvrhi::hash_combine(hash, s.slot);
+            nvrhi::hash_combine(hash, s.arrayElement);
+            return hash;
+        }
+    };
+} // namespace std
+
+namespace nvrhi::validation
+{
+    typedef std::unordered_set<BindingLocation> BindingLocationSet;
+
+    struct BindingSummary
+    {
+        BindingLocationSet locations;
         uint32_t numVolatileCBs = 0;
         Range rangeSRV;
         Range rangeSampler;
@@ -52,9 +99,10 @@ namespace nvrhi::validation
         Range rangeCB;
 
         [[nodiscard]] bool any() const;
-        [[nodiscard]] bool overlapsWith(const ShaderBindingSet& other) const;
-        friend std::ostream& operator<<(std::ostream& os, const ShaderBindingSet& set);
+        [[nodiscard]] bool overlapsWith(const BindingSummary& other) const;
     };
+    
+    std::ostream& operator<<(std::ostream& os, const BindingLocationSet& set);
 
     enum class CommandListState
     {
@@ -164,6 +212,10 @@ namespace nvrhi::validation
         void clearBufferUInt(IBuffer* b, uint32_t clearValue) override;
         void copyBuffer(IBuffer* dest, uint64_t destOffsetBytes, IBuffer* src, uint64_t srcOffsetBytes, uint64_t dataSizeBytes) override;
 
+        void clearSamplerFeedbackTexture(ISamplerFeedbackTexture* texture) override;
+        void decodeSamplerFeedbackTexture(IBuffer* buffer, ISamplerFeedbackTexture* texture, nvrhi::Format format) override;
+        void setSamplerFeedbackTextureState(ISamplerFeedbackTexture* texture, ResourceStates stateBits) override;
+
         void setPushConstants(const void* data, size_t byteSize) override;
 
         void setGraphicsState(const GraphicsState& state) override;
@@ -171,6 +223,7 @@ namespace nvrhi::validation
         void drawIndexed(const DrawArguments& args) override;
         void drawIndirect(uint32_t offsetBytes, uint32_t drawCount) override;
         void drawIndexedIndirect(uint32_t offsetBytes, uint32_t drawCount) override;
+        void drawIndexedIndirectCount(uint32_t paramOffsetBytes, uint32_t countOffsetBytes, uint32_t maxDrawCount) override;
 
         void setComputeState(const ComputeState& state) override;
         void dispatch(uint32_t groupsX, uint32_t groupsY = 1, uint32_t groupsZ = 1) override;
@@ -178,6 +231,8 @@ namespace nvrhi::validation
 
         void setMeshletState(const MeshletState& state) override;
         void dispatchMesh(uint32_t groupsX, uint32_t groupsY = 1, uint32_t groupsZ = 1) override;
+        void dispatchMeshIndirect(uint32_t offsetBytes, uint32_t maxDrawCount) override;
+        void dispatchMeshIndirectCount(uint32_t paramOffsetBytes, uint32_t countOffsetBytes, uint32_t maxDrawCount) override;
 
         void setRayTracingState(const rt::State& state) override;
         void dispatchRays(const rt::DispatchRaysArguments& args) override;
@@ -185,10 +240,13 @@ namespace nvrhi::validation
         void buildOpacityMicromap(rt::IOpacityMicromap* omm, const rt::OpacityMicromapDesc& desc) override;
         void buildBottomLevelAccelStruct(rt::IAccelStruct* as, const rt::GeometryDesc* pGeometries, size_t numGeometries, rt::AccelStructBuildFlags buildFlags) override;
         void compactBottomLevelAccelStructs() override;
+        void copyRaytracingAccelerationStructure(rt::IAccelStruct* destination, rt::IAccelStruct* source) override;
         void buildTopLevelAccelStruct(rt::IAccelStruct* as, const rt::InstanceDesc* pInstances, size_t numInstances, rt::AccelStructBuildFlags buildFlags) override;
         void buildTopLevelAccelStructFromBuffer(rt::IAccelStruct* as, nvrhi::IBuffer* instanceBuffer, uint64_t instanceBufferOffset, size_t numInstances,
             rt::AccelStructBuildFlags buildFlags = rt::AccelStructBuildFlags::None) override;
         void executeMultiIndirectClusterOperation(const rt::cluster::OperationDesc& desc) override;
+
+        void convertCoopVecMatrices(coopvec::ConvertMatrixLayoutDesc const* convertDescs, size_t numDescs) override;
 
         void beginTimerQuery(ITimerQuery* query) override;
         void endTimerQuery(ITimerQuery* query) override;
@@ -236,10 +294,10 @@ namespace nvrhi::validation
         void error(const std::string& messageText) const;
         void warning(const std::string& messageText) const;
 
-        bool validateBindingSetItem(const BindingSetItem& binding, bool isDescriptorTable, std::stringstream& errorStream);
+        bool validateBindingSetItem(const BindingSetItem& binding, IDescriptorTable *pOptDescriptorTable, std::stringstream& errorStream);
         bool validatePipelineBindingLayouts(const static_vector<BindingLayoutHandle, c_MaxBindingLayouts>& bindingLayouts, const std::vector<IShader*>& shaders) const;
         bool validateShaderType(ShaderType expected, const ShaderDesc& shaderDesc, const char* function) const;
-        bool validateRenderState(const RenderState& renderState, IFramebuffer* fb) const;
+        bool validateRenderState(const RenderState& renderState, FramebufferInfo const& fbinfo) const;
 
         bool validateClusterOperationParams(const rt::cluster::OperationParams& params) const;
     public:
@@ -264,6 +322,9 @@ namespace nvrhi::validation
 
         void getTextureTiling(ITexture* texture, uint32_t* numTiles, PackedMipDesc* desc, TileShape* tileShape, uint32_t* subresourceTilingsNum, SubresourceTiling* subresourceTilings) override;
         void updateTextureTileMappings(ITexture* texture, const TextureTilesMapping* tileMappings, uint32_t numTileMappings, CommandQueue executionQueue = CommandQueue::Graphics) override;
+
+        SamplerFeedbackTextureHandle createSamplerFeedbackTexture(ITexture* pairedTexture, const SamplerFeedbackTextureDesc& desc) override;
+        SamplerFeedbackTextureHandle createSamplerFeedbackForNativeTexture(ObjectType objectType, Object texture, ITexture* pairedTexture) override;
 
         BufferHandle createBuffer(const BufferDesc& d) override;
         void *mapBuffer(IBuffer* b, CpuAccessMode mapFlags) override;
@@ -298,9 +359,13 @@ namespace nvrhi::validation
 
         FramebufferHandle createFramebuffer(const FramebufferDesc& desc) override;
 
+        GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, FramebufferInfo const& fbinfo) override;
+
         GraphicsPipelineHandle createGraphicsPipeline(const GraphicsPipelineDesc& desc, IFramebuffer* fb) override;
 
         ComputePipelineHandle createComputePipeline(const ComputePipelineDesc& desc) override;
+
+        MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, FramebufferInfo const& fbinfo) override;
 
         MeshletPipelineHandle createMeshletPipeline(const MeshletPipelineDesc& desc, IFramebuffer* fb) override;
 
@@ -325,9 +390,14 @@ namespace nvrhi::validation
         uint64_t executeCommandLists(ICommandList* const* pCommandLists, size_t numCommandLists, CommandQueue executionQueue = CommandQueue::Graphics) override;
         void queueWaitForCommandList(CommandQueue waitQueue, CommandQueue executionQueue, uint64_t instance) override;
         bool waitForIdle() override;
+        CommandListLifetimeTrackerHandle createCommandListLifetimeTracker(CommandQueue executionQueue) override;
         void runGarbageCollection() override;
         bool queryFeatureSupport(Feature feature, void* pInfo = nullptr, size_t infoSize = 0) override;
         FormatSupport queryFormatSupport(Format format) override;
+        coopvec::DeviceFeatures queryCoopVecFeatures() override;
+        coopvec::MatMulFormatSupport queryCoopVecMatMulFormatSupport(const coopvec::MatMulFormatCombo& combination) override;
+        coopvec::TrainingFormatSupport queryCoopVecTrainingFormatSupport(coopvec::DataType componentType) override;
+        size_t getCoopVecMatrixSize(coopvec::DataType type, coopvec::MatrixLayout layout, int rows, int columns) override;
         Object getNativeQueue(ObjectType objectType, CommandQueue queue) override;
         IMessageCallback* getMessageCallback() override;
         bool isAftermathEnabled() override;

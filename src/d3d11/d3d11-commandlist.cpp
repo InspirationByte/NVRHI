@@ -188,6 +188,16 @@ namespace nvrhi::d3d11
         utils::NotSupported();
     }
 
+    void CommandList::dispatchMeshIndirect(uint32_t, uint32_t)
+    {
+        utils::NotSupported();
+    }
+
+    void CommandList::dispatchMeshIndirectCount(uint32_t, uint32_t, uint32_t)
+    {
+        utils::NotSupported();
+    }
+
     void CommandList::setRayTracingState(const rt::State&)
     {
         utils::NotSupported();
@@ -213,6 +223,11 @@ namespace nvrhi::d3d11
         utils::NotSupported();
     }
 
+    void CommandList::copyRaytracingAccelerationStructure(rt::IAccelStruct*, rt::IAccelStruct*)
+    {
+        utils::NotSupported();
+    }
+
     void CommandList::buildTopLevelAccelStruct(rt::IAccelStruct*, const rt::InstanceDesc*, size_t, rt::AccelStructBuildFlags)
     {
         utils::NotSupported();
@@ -227,4 +242,10 @@ namespace nvrhi::d3d11
     {
         utils::NotSupported();
     }
+
+    void CommandList::convertCoopVecMatrices(coopvec::ConvertMatrixLayoutDesc const*, size_t)
+    {
+        utils::NotSupported();
+    }
+
 } // namespace nvrhi::d3d11

@@ -35,6 +35,8 @@ namespace nvrhi::vulkan
 
         BindingSet* bindingSet = checked_cast<BindingSet*>(_bindingSet);
 
+        ResourceStates const shaderResourceState = getShaderResourceStateForBindingLayout(bindingSet->layout);
+
         for (auto bindingIndex : bindingSet->bindingsThatNeedTransitions)
         {
             const BindingSetItem& binding = bindingSet->desc.bindings[bindingIndex];
@@ -42,8 +44,19 @@ namespace nvrhi::vulkan
             switch(binding.type)  // NOLINT(clang-diagnostic-switch-enum)
             {
                 case ResourceType::Texture_SRV:
-                    requireTextureState(checked_cast<ITexture*>(binding.resourceHandle), binding.subresources, ResourceStates::ShaderResource);
+                {
+                    // Depth/stencil textures bound as SRV must transition to eDepthStencilReadOnlyOptimal,
+                    // not eShaderReadOnlyOptimal, because the descriptor already declares it as such
+                    // (see vulkan-resource-bindings.cpp). We achieve this by combining ShaderResource with
+                    // DepthRead, vulkan-constants.cpp resolves that combination to eDepthStencilReadOnlyOptimal.
+                    auto* texture = checked_cast<Texture*>(binding.resourceHandle);
+                    const FormatInfo& fmtInfo = getFormatInfo(texture->desc.format);
+                    const ResourceStates srvState = (fmtInfo.hasDepth || fmtInfo.hasStencil)
+                        ? (shaderResourceState | ResourceStates::DepthRead)
+                        : shaderResourceState;
+                    requireTextureState(texture, binding.subresources, srvState);
                     break;
+                }
 
                 case ResourceType::Texture_UAV:
                     requireTextureState(checked_cast<ITexture*>(binding.resourceHandle), binding.subresources, ResourceStates::UnorderedAccess);
@@ -52,7 +65,7 @@ namespace nvrhi::vulkan
                 case ResourceType::TypedBuffer_SRV:
                 case ResourceType::StructuredBuffer_SRV:
                 case ResourceType::RawBuffer_SRV:
-                    requireBufferState(checked_cast<IBuffer*>(binding.resourceHandle), ResourceStates::ShaderResource);
+                    requireBufferState(checked_cast<IBuffer*>(binding.resourceHandle), shaderResourceState);
                     break;
 
                 case ResourceType::TypedBuffer_UAV:
@@ -75,24 +88,42 @@ namespace nvrhi::vulkan
         }
     }
 
-    void CommandList::trackResourcesAndBarriers(const GraphicsState& state)
+    void CommandList::insertResourceBarriersForBindingSets(const BindingSetVector& newBindings, const BindingSetVector& oldBindings)
     {
-        assert(m_EnableAutomaticBarriers);
+        uint32_t bindingUpdateMask = 0;
 
-        if (arraysAreDifferent(state.bindings, m_CurrentGraphicsState.bindings))
+        if (m_BindingStatesDirty)
+            bindingUpdateMask = ~0u;
+
+        if (bindingUpdateMask == 0)
+            bindingUpdateMask = arrayDifferenceMask(newBindings, oldBindings);
+
+        if (bindingUpdateMask != 0)
         {
-            for (size_t i = 0; i < state.bindings.size(); i++)
+            for (size_t i = 0; i < newBindings.size(); i++)
             {
-                setResourceStatesForBindingSet(state.bindings[i]);
+                if (newBindings[i]->getDesc() == nullptr) // Ignore bindless sets
+                    continue;
+
+                BindingSet const* bindingSet = checked_cast<BindingSet const*>(newBindings[i]);
+
+                bool const updateThisSet = (bindingUpdateMask & (1u << i)) != 0;
+                if (updateThisSet || bindingSet->hasUavBindings) // UAV bindings may place UAV barriers on the same binding set
+                    setResourceStatesForBindingSet(newBindings[i]);
             }
         }
+    }
 
-        if (state.indexBuffer.buffer && state.indexBuffer.buffer != m_CurrentGraphicsState.indexBuffer.buffer)
+    void CommandList::insertGraphicsResourceBarriers(const GraphicsState& state)
+    {
+        insertResourceBarriersForBindingSets(state.bindings, m_CurrentGraphicsState.bindings);
+
+        if (state.indexBuffer.buffer && (m_BindingStatesDirty || state.indexBuffer.buffer != m_CurrentGraphicsState.indexBuffer.buffer))
         {
             requireBufferState(state.indexBuffer.buffer, ResourceStates::IndexBuffer);
         }
 
-        if (arraysAreDifferent(state.vertexBuffers, m_CurrentGraphicsState.vertexBuffers))
+        if (m_BindingStatesDirty || arraysAreDifferent(state.vertexBuffers, m_CurrentGraphicsState.vertexBuffers))
         {
             for (const auto& vb : state.vertexBuffers)
             {
@@ -100,38 +131,65 @@ namespace nvrhi::vulkan
             }
         }
 
-        if (m_CurrentGraphicsState.framebuffer != state.framebuffer)
+        if (m_BindingStatesDirty || m_CurrentGraphicsState.framebuffer != state.framebuffer)
         {
             setResourceStatesForFramebuffer(state.framebuffer);
         }
 
-        if (state.indirectParams && state.indirectParams != m_CurrentGraphicsState.indirectParams)
+        if (state.indirectParams && (m_BindingStatesDirty || state.indirectParams != m_CurrentGraphicsState.indirectParams))
         {
             requireBufferState(state.indirectParams, ResourceStates::IndirectArgument);
         }
+
+        if (state.indirectCountBuffer && (m_BindingStatesDirty || state.indirectCountBuffer != m_CurrentGraphicsState.indirectCountBuffer))
+        {
+            requireBufferState(state.indirectCountBuffer, ResourceStates::IndirectArgument);
+        }
+
+        m_BindingStatesDirty = false;
     }
 
-    void CommandList::trackResourcesAndBarriers(const MeshletState& state)
+    void CommandList::insertComputeResourceBarriers(const ComputeState& state)
     {
-        assert(m_EnableAutomaticBarriers);
-        
-        if (arraysAreDifferent(state.bindings, m_CurrentMeshletState.bindings))
+        insertResourceBarriersForBindingSets(state.bindings, m_CurrentComputeState.bindings);
+
+        if (state.indirectParams && (m_BindingStatesDirty || state.indirectParams != m_CurrentComputeState.indirectParams))
         {
-            for (size_t i = 0; i < state.bindings.size(); i++)
-            {
-                setResourceStatesForBindingSet(state.bindings[i]);
-            }
+            Buffer* indirectParams = checked_cast<Buffer*>(state.indirectParams);
+
+            requireBufferState(indirectParams, ResourceStates::IndirectArgument);
         }
 
-        if (m_CurrentMeshletState.framebuffer != state.framebuffer)
+        m_BindingStatesDirty = false;
+    }
+
+    void CommandList::insertMeshletResourceBarriers(const MeshletState& state)
+    {
+        insertResourceBarriersForBindingSets(state.bindings, m_CurrentMeshletState.bindings);
+
+        if (m_BindingStatesDirty || m_CurrentMeshletState.framebuffer != state.framebuffer)
         {
             setResourceStatesForFramebuffer(state.framebuffer);
         }
 
-        if (state.indirectParams && state.indirectParams != m_CurrentMeshletState.indirectParams)
+        if (state.indirectParams && (m_BindingStatesDirty || state.indirectParams != m_CurrentMeshletState.indirectParams))
         {
             requireBufferState(state.indirectParams, ResourceStates::IndirectArgument);
         }
+
+        if (state.indirectCountBuffer && (m_BindingStatesDirty || state.indirectCountBuffer != m_CurrentMeshletState.indirectCountBuffer))
+        {
+            requireBufferState(state.indirectCountBuffer, ResourceStates::IndirectArgument);
+        }
+        
+        m_BindingStatesDirty = false;
+    }
+
+    void CommandList::insertRayTracingResourceBarriers(const rt::State& state)
+    {
+        insertResourceBarriersForBindingSets(state.bindings, m_CurrentRayTracingState.bindings);
+
+        m_BindingStatesDirty = false;
     }
 
     void CommandList::requireTextureState(ITexture* _texture, TextureSubresourceSet subresources, ResourceStates state)
@@ -155,113 +213,13 @@ namespace nvrhi::vulkan
 
     void CommandList::commitBarriersInternal()
     {
-        std::vector<vk::ImageMemoryBarrier> imageBarriers;
-        std::vector<vk::BufferMemoryBarrier> bufferBarriers;
-        vk::PipelineStageFlags beforeStageFlags = vk::PipelineStageFlags(0);
-        vk::PipelineStageFlags afterStageFlags = vk::PipelineStageFlags(0);
-
-        for (const TextureBarrier& barrier : m_StateTracker.getTextureBarriers())
-        {
-            ResourceStateMapping before = convertResourceState(barrier.stateBefore);
-            ResourceStateMapping after = convertResourceState(barrier.stateAfter);
-
-            if ((before.stageFlags != beforeStageFlags || after.stageFlags != afterStageFlags) && !imageBarriers.empty())
-            {
-                m_CurrentCmdBuf->cmdBuf.pipelineBarrier(beforeStageFlags, afterStageFlags,
-                    vk::DependencyFlags(), {}, {}, imageBarriers);
-
-                imageBarriers.clear();
-            }
-
-            beforeStageFlags = before.stageFlags;
-            afterStageFlags = after.stageFlags;
-
-            assert(after.imageLayout != vk::ImageLayout::eUndefined);
-
-            Texture* texture = static_cast<Texture*>(barrier.texture);
-
-            const FormatInfo& formatInfo = getFormatInfo(texture->desc.format);
-
-            vk::ImageAspectFlags aspectMask = (vk::ImageAspectFlagBits)0;
-            if (formatInfo.hasDepth) aspectMask |= vk::ImageAspectFlagBits::eDepth;
-            if (formatInfo.hasStencil) aspectMask |= vk::ImageAspectFlagBits::eStencil;
-            if (!aspectMask) aspectMask = vk::ImageAspectFlagBits::eColor;
-
-            vk::ImageSubresourceRange subresourceRange = vk::ImageSubresourceRange()
-                .setBaseArrayLayer(barrier.entireTexture ? 0 : barrier.arraySlice)
-                .setLayerCount(barrier.entireTexture ? texture->desc.arraySize : 1)
-                .setBaseMipLevel(barrier.entireTexture ? 0 : barrier.mipLevel)
-                .setLevelCount(barrier.entireTexture ? texture->desc.mipLevels : 1)
-                .setAspectMask(aspectMask);
-
-            imageBarriers.push_back(vk::ImageMemoryBarrier()
-                .setSrcAccessMask(before.accessMask)
-                .setDstAccessMask(after.accessMask)
-                .setOldLayout(before.imageLayout)
-                .setNewLayout(after.imageLayout)
-                .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                .setImage(texture->image)
-                .setSubresourceRange(subresourceRange));
-        }
-
-        if (!imageBarriers.empty())
-        {
-            m_CurrentCmdBuf->cmdBuf.pipelineBarrier(beforeStageFlags, afterStageFlags,
-                vk::DependencyFlags(), {}, {}, imageBarriers);
-        }
-
-        beforeStageFlags = vk::PipelineStageFlags(0);
-        afterStageFlags = vk::PipelineStageFlags(0);
-        imageBarriers.clear();
-
-        for (const BufferBarrier& barrier : m_StateTracker.getBufferBarriers())
-        {
-            ResourceStateMapping before = convertResourceState(barrier.stateBefore);
-            ResourceStateMapping after = convertResourceState(barrier.stateAfter);
-
-            if ((before.stageFlags != beforeStageFlags || after.stageFlags != afterStageFlags) && !bufferBarriers.empty())
-            {
-                m_CurrentCmdBuf->cmdBuf.pipelineBarrier(beforeStageFlags, afterStageFlags,
-                    vk::DependencyFlags(), {}, bufferBarriers, {});
-
-                bufferBarriers.clear();
-            }
-
-            beforeStageFlags = before.stageFlags;
-            afterStageFlags = after.stageFlags;
-
-            Buffer* buffer = static_cast<Buffer*>(barrier.buffer);
-
-            bufferBarriers.push_back(vk::BufferMemoryBarrier()
-                .setSrcAccessMask(before.accessMask)
-                .setDstAccessMask(after.accessMask)
-                .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
-                .setBuffer(buffer->buffer)
-                .setOffset(0)
-                .setSize(buffer->desc.byteSize));
-        }
-
-        if (!bufferBarriers.empty())
-        {
-            m_CurrentCmdBuf->cmdBuf.pipelineBarrier(beforeStageFlags, afterStageFlags,
-                vk::DependencyFlags(), {}, bufferBarriers, {});
-        }
-        bufferBarriers.clear();
-
-        m_StateTracker.clearBarriers();
-    }
-
-    void CommandList::commitBarriersInternal_synchronization2()
-    {
         std::vector<vk::ImageMemoryBarrier2> imageBarriers;
         std::vector<vk::BufferMemoryBarrier2> bufferBarriers;
 
         for (const TextureBarrier& barrier : m_StateTracker.getTextureBarriers())
         {
-            ResourceStateMapping2 before = convertResourceState2(barrier.stateBefore);
-            ResourceStateMapping2 after = convertResourceState2(barrier.stateAfter);
+            ResourceStateMapping before = convertResourceState(barrier.stateBefore, true);
+            ResourceStateMapping after = convertResourceState(barrier.stateAfter, true);
 
             assert(after.imageLayout != vk::ImageLayout::eUndefined);
 
@@ -306,8 +264,8 @@ namespace nvrhi::vulkan
 
         for (const BufferBarrier& barrier : m_StateTracker.getBufferBarriers())
         {
-            ResourceStateMapping2 before = convertResourceState2(barrier.stateBefore);
-            ResourceStateMapping2 after = convertResourceState2(barrier.stateAfter);
+            ResourceStateMapping before = convertResourceState(barrier.stateBefore, false);
+            ResourceStateMapping after = convertResourceState(barrier.stateAfter, false);
 
             Buffer* buffer = static_cast<Buffer*>(barrier.buffer);
 
@@ -342,14 +300,7 @@ namespace nvrhi::vulkan
 
         endRenderPass();
 
-        if (m_Context.extensions.KHR_synchronization2)
-        {
-            commitBarriersInternal_synchronization2();
-        }
-        else
-        {
-            commitBarriersInternal();
-        }
+        commitBarriersInternal();
     }
 
     void CommandList::beginTrackingTextureState(ITexture* _texture, TextureSubresourceSet subresources, ResourceStates stateBits)

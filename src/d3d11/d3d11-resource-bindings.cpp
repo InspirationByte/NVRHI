@@ -55,13 +55,17 @@ BindingSetHandle Device::createBindingSet(const BindingSetDesc& desc, IBindingLa
 
     for (const BindingSetItem& binding : desc.bindings)
     {
-        const uint32_t& slot = binding.slot;
+        uint32_t slot = binding.slot + binding.arrayElement;
 
         switch (binding.type)  // NOLINT(clang-diagnostic-switch-enum)
         {
         case ResourceType::Texture_SRV:
         {
             const auto texture = checked_cast<Texture*>(binding.resourceHandle);
+
+            // D3D11_SHADER_RESOURCE_VIEW_DESC has no component-mapping field.
+            if (!resolveComponentMapping(binding.overrideComponentMapping, texture->desc.defaultComponentMapping).isIdentity())
+                utils::NotSupported();
 
             assert(ret->SRVs[slot] == nullptr);
             ret->SRVs[slot] = texture->getSRV(binding.format, binding.subresources, binding.dimension);

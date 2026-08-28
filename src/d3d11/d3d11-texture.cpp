@@ -43,7 +43,8 @@ namespace nvrhi::d3d11
         }
     }
 
-    Object Texture::getNativeView(ObjectType objectType, Format format, TextureSubresourceSet subresources, TextureDimension dimension, bool isReadOnlyDSV)
+    Object Texture::getNativeView(ObjectType objectType, Format format, TextureSubresourceSet subresources, TextureDimension dimension, bool isReadOnlyDSV,
+        std::optional<ComponentMapping> overrideComponentMapping)
     {
         switch (objectType)
         {
@@ -52,6 +53,9 @@ namespace nvrhi::d3d11
         case ObjectTypes::D3D11_DepthStencilView:
             return getDSV(subresources, isReadOnlyDSV);
         case ObjectTypes::D3D11_ShaderResourceView:
+            // D3D11_SHADER_RESOURCE_VIEW_DESC has no component-mapping field.
+            if (!resolveComponentMapping(overrideComponentMapping, desc.defaultComponentMapping).isIdentity())
+                utils::NotSupported();
             return getSRV(format, subresources, dimension);
         case ObjectTypes::D3D11_UnorderedAccessView:
             return getUAV(format, subresources, dimension);
@@ -339,11 +343,41 @@ namespace nvrhi::d3d11
     {
         Texture* texture = checked_cast<Texture*>(_texture);
 
-#ifdef _DEBUG
         const FormatInfo& formatInfo = getFormatInfo(texture->desc.format);
+#ifdef _DEBUG
         assert(!formatInfo.hasDepth && !formatInfo.hasStencil);
         assert(texture->desc.isUAV || texture->desc.isRenderTarget);
+        assert(formatInfo.blockSize == 1);
 #endif
+
+        Format interpretFormat = texture->desc.format;
+        if (texture->desc.isTypeless)
+        {
+            if (!(formatInfo.hasDepth || formatInfo.hasStencil))
+            {
+                switch (formatInfo.bytesPerBlock)
+                {
+                    case 1:
+                        interpretFormat = Format::R8_UINT;
+                        break;
+                    case 2:
+                        interpretFormat = Format::R16_UINT;
+                        break;
+                    case 4:
+                        interpretFormat = Format::R32_UINT;
+                        break;
+                    case 8:
+                        interpretFormat = Format::RG32_UINT;
+                        break;
+                    case 12:
+                        interpretFormat = Format::RGB32_UINT;
+                        break;
+                    case 16:
+                        interpretFormat = Format::RGBA32_UINT;
+                        break;
+                }
+            }
+        }
 
         subresources = subresources.resolve(texture->desc, false);
 
@@ -353,7 +387,7 @@ namespace nvrhi::d3d11
 
             if (texture->desc.isUAV)
             {
-                ID3D11UnorderedAccessView* uav = texture->getUAV(Format::UNKNOWN, currentMipSlice, TextureDimension::Unknown);
+                ID3D11UnorderedAccessView* uav = texture->getUAV(interpretFormat, currentMipSlice, TextureDimension::Unknown);
 
                 uint32_t clearValues[4] = { clearColor, clearColor, clearColor, clearColor };
                 m_Context.immediateContext->ClearUnorderedAccessViewUint(uav, clearValues);
@@ -370,6 +404,30 @@ namespace nvrhi::d3d11
                 break;
             }
         }
+    }
+
+    void CommandList::clearSamplerFeedbackTexture(ISamplerFeedbackTexture* texture)
+    {
+        (void)texture;
+
+        utils::NotSupported();
+    }
+
+    void CommandList::decodeSamplerFeedbackTexture(IBuffer* buffer, ISamplerFeedbackTexture* texture, nvrhi::Format format)
+    {
+        (void)buffer;
+        (void)texture;
+        (void)format;
+
+        utils::NotSupported();
+    }
+
+    void CommandList::setSamplerFeedbackTextureState(ISamplerFeedbackTexture* texture, ResourceStates stateBits)
+    {
+        (void)texture;
+        (void)stateBits;
+
+        utils::NotSupported();
     }
 
     void CommandList::copyTexture(ID3D11Resource *dst, const TextureDesc& dstDesc, const TextureSlice& dstSlice,

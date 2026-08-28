@@ -37,9 +37,9 @@ namespace nvrhi::vulkan
     {
 #if defined(NVRHI_SHARED_LIBRARY_BUILD)
 #if VK_HEADER_VERSION >= 301
-        vk::detail::DynamicLoader dl;
+        vk::detail::DynamicLoader dl(desc.vulkanLibraryName);
 #else
-        vk::DynamicLoader dl;
+        vk::DynamicLoader dl(desc.vulkanLibraryName);
 #endif
         const PFN_vkGetInstanceProcAddr vkGetInstanceProcAddr =   // NOLINT(misc-misplaced-const)
             dl.getProcAddress<PFN_vkGetInstanceProcAddr>("vkGetInstanceProcAddr");
@@ -83,12 +83,17 @@ namespace nvrhi::vulkan
             { VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME, &m_Context.extensions.KHR_acceleration_structure },
             { VK_KHR_BUFFER_DEVICE_ADDRESS_EXTENSION_NAME, &m_Context.extensions.buffer_device_address },
             { VK_KHR_FRAGMENT_SHADING_RATE_EXTENSION_NAME, &m_Context.extensions.KHR_fragment_shading_rate },
-            { VK_KHR_MAINTENANCE1_EXTENSION_NAME, &m_Context.extensions.KHR_maintenance1 },
             { VK_KHR_RAY_QUERY_EXTENSION_NAME,&m_Context.extensions.KHR_ray_query },
             { VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME, &m_Context.extensions.KHR_ray_tracing_pipeline },
-            { VK_KHR_SYNCHRONIZATION_2_EXTENSION_NAME, &m_Context.extensions.KHR_synchronization2 },
-            { VK_NV_MESH_SHADER_EXTENSION_NAME, &m_Context.extensions.NV_mesh_shader },
+            { VK_KHR_RAY_TRACING_POSITION_FETCH_EXTENSION_NAME, &m_Context.extensions.KHR_ray_tracing_position_fetch },
+            { VK_EXT_MESH_SHADER_EXTENSION_NAME, &m_Context.extensions.EXT_mesh_shader },
             { VK_NV_RAY_TRACING_INVOCATION_REORDER_EXTENSION_NAME, &m_Context.extensions.NV_ray_tracing_invocation_reorder },
+            { VK_NV_CLUSTER_ACCELERATION_STRUCTURE_EXTENSION_NAME, &m_Context.extensions.NV_cluster_acceleration_structure },
+            { VK_EXT_MUTABLE_DESCRIPTOR_TYPE_EXTENSION_NAME, &m_Context.extensions.EXT_mutable_descriptor_type },
+            { VK_NV_COOPERATIVE_VECTOR_EXTENSION_NAME, &m_Context.extensions.NV_cooperative_vector },
+            { VK_NV_RAY_TRACING_LINEAR_SWEPT_SPHERES_EXTENSION_NAME, &m_Context.extensions.NV_ray_tracing_linear_swept_spheres },
+            { VK_EXT_DEPTH_CLIP_ENABLE_EXTENSION_NAME, &m_Context.extensions.EXT_depth_clip_enable },
+            // This section must be last for trailing commas.
 #if NVRHI_WITH_AFTERMATH
             { VK_NV_DEVICE_DIAGNOSTIC_CHECKPOINTS_EXTENSION_NAME, &m_Context.extensions.NV_device_diagnostic_checkpoints },
             { VK_NV_DEVICE_DIAGNOSTICS_CONFIG_EXTENSION_NAME, &m_Context.extensions.NV_device_diagnostics_config }
@@ -118,6 +123,8 @@ namespace nvrhi::vulkan
         if (desc.bufferDeviceAddressSupported)
             m_Context.extensions.buffer_device_address = true;
 
+        m_Context.descriptorBindingUniformBufferUpdateAfterBind = desc.descriptorBindingUniformBufferUpdateAfterBind;
+
         void* pNext = nullptr;
         vk::PhysicalDeviceAccelerationStructurePropertiesKHR accelStructProperties;
         vk::PhysicalDeviceRayTracingPipelinePropertiesKHR rayTracingPipelineProperties;
@@ -125,8 +132,15 @@ namespace nvrhi::vulkan
         vk::PhysicalDeviceFragmentShadingRatePropertiesKHR shadingRateProperties;
         vk::PhysicalDeviceOpacityMicromapPropertiesEXT opacityMicromapProperties;
         vk::PhysicalDeviceRayTracingInvocationReorderPropertiesNV nvRayTracingInvocationReorderProperties;
+        vk::PhysicalDeviceClusterAccelerationStructurePropertiesNV nvClusterAccelerationStructureProperties;
+        vk::PhysicalDeviceCooperativeVectorPropertiesNV nvCoopVecProperties;
+        vk::PhysicalDeviceSubgroupProperties subgroupProperties;
         
         vk::PhysicalDeviceProperties2 deviceProperties2;
+
+        // Subgroup properties are provided by core Vulkan 1.1
+        subgroupProperties.pNext = pNext;
+        pNext = &subgroupProperties;
 
         if (m_Context.extensions.KHR_acceleration_structure)
         {
@@ -164,6 +178,18 @@ namespace nvrhi::vulkan
             pNext = &nvRayTracingInvocationReorderProperties;
         }
 
+        if (m_Context.extensions.NV_cluster_acceleration_structure)
+        {
+            nvClusterAccelerationStructureProperties.pNext = pNext;
+            pNext = &nvClusterAccelerationStructureProperties;
+        }
+
+        if (m_Context.extensions.NV_cooperative_vector)
+        {
+            nvCoopVecProperties.pNext = pNext;
+            pNext = &nvCoopVecProperties;
+        }
+
         deviceProperties2.pNext = pNext;
 
         m_Context.physicalDevice.getProperties2(&deviceProperties2);
@@ -175,21 +201,31 @@ namespace nvrhi::vulkan
         m_Context.shadingRateProperties = shadingRateProperties;
         m_Context.opacityMicromapProperties = opacityMicromapProperties;
         m_Context.nvRayTracingInvocationReorderProperties = nvRayTracingInvocationReorderProperties;
+        m_Context.subgroupProperties = subgroupProperties;
+        m_Context.nvClusterAccelerationStructureProperties = nvClusterAccelerationStructureProperties;
+        m_Context.coopVecProperties = nvCoopVecProperties;
         m_Context.messageCallback = desc.errorCB;
-
-        if (m_Context.extensions.EXT_opacity_micromap && !m_Context.extensions.KHR_synchronization2)
-        {
-            m_Context.warning(
-                "EXT_opacity_micromap is used without KHR_synchronization2 which is nessesary for OMM Array state transitions. Feature::RayTracingOpacityMicromap will be disabled.");
-        }
+        m_Context.logBufferLifetime = desc.logBufferLifetime;
 
         if (m_Context.extensions.KHR_fragment_shading_rate)
         {
             vk::PhysicalDeviceFeatures2 deviceFeatures2;
-            vk::PhysicalDeviceFragmentShadingRateFeaturesKHR shadingRateFeatures;
-            deviceFeatures2.setPNext(&shadingRateFeatures);
+            deviceFeatures2.setPNext(&m_Context.shadingRateFeatures);
             m_Context.physicalDevice.getFeatures2(&deviceFeatures2);
-            m_Context.shadingRateFeatures = shadingRateFeatures;
+        }
+
+        if (m_Context.extensions.NV_cooperative_vector)
+        {
+            vk::PhysicalDeviceFeatures2 deviceFeatures2;
+            deviceFeatures2.setPNext(&m_Context.coopVecFeatures);
+            m_Context.physicalDevice.getFeatures2(&deviceFeatures2);
+        }
+
+        if (m_Context.extensions.NV_ray_tracing_linear_swept_spheres)
+        {
+            vk::PhysicalDeviceFeatures2 deviceFeatures2;
+            deviceFeatures2.setPNext(&m_Context.linearSweptSpheresFeatures);
+            m_Context.physicalDevice.getFeatures2(&deviceFeatures2);
         }
 #ifdef NVRHI_WITH_RTXMU
         if (m_Context.extensions.KHR_acceleration_structure)
@@ -290,13 +326,22 @@ namespace nvrhi::vulkan
         return true;
     }
 
+    CommandListLifetimeTrackerHandle Device::createCommandListLifetimeTracker(CommandQueue executionQueue)
+    {
+        Queue* const queue = getQueue(executionQueue);
+        if (!queue)
+            return nullptr;
+
+        return CommandListLifetimeTrackerHandle::Create(new CommandListLifetimeTracker(m_Context, queue));
+    }
+
     void Device::runGarbageCollection()
     {
         for (auto& m_Queue : m_Queues)
         {
             if (m_Queue)
             {
-                m_Queue->retireCommandBuffers();
+                m_Queue->runGarbageCollection();
             }
         }
     }
@@ -315,7 +360,7 @@ namespace nvrhi::vulkan
 #ifdef NVRHI_WITH_RTXMU
             return false; // RTXMU does not support OMMs
 #else
-            return m_Context.extensions.EXT_opacity_micromap && m_Context.extensions.KHR_synchronization2;
+            return m_Context.extensions.EXT_opacity_micromap;
 #endif
         case Feature::RayQuery:
             return m_Context.extensions.KHR_ray_query;
@@ -327,10 +372,14 @@ namespace nvrhi::vulkan
             }
             return false;
         }
+        case Feature::RayTracingClusters:
+            return m_Context.extensions.NV_cluster_acceleration_structure;
+        case Feature::RayTracingPositionFetch:
+            return m_Context.extensions.KHR_ray_tracing_position_fetch;
         case Feature::ShaderSpecializations:
             return true;
         case Feature::Meshlets:
-            return m_Context.extensions.NV_mesh_shader;
+            return m_Context.extensions.EXT_mesh_shader;
         case Feature::VariableRateShading:
             if (pInfo)
             {
@@ -354,6 +403,32 @@ namespace nvrhi::vulkan
             return (m_Queues[uint32_t(CommandQueue::Copy)] != nullptr);
         case Feature::ConstantBufferRanges:
             return true;
+        case Feature::WaveLaneCountMinMax:
+            if (m_Context.subgroupProperties.subgroupSize == 0)
+                return false;
+            if (pInfo)
+            {
+                if (infoSize == sizeof(WaveLaneCountMinMaxFeatureInfo))
+                {
+                    auto* pWaveLaneCountMinMaxInfo = reinterpret_cast<WaveLaneCountMinMaxFeatureInfo*>(pInfo);
+                    // Only one subgroup/wave size is supported on Vulkan
+                    pWaveLaneCountMinMaxInfo->minWaveLaneCount = m_Context.subgroupProperties.subgroupSize;
+                    pWaveLaneCountMinMaxInfo->maxWaveLaneCount = m_Context.subgroupProperties.subgroupSize;
+                }
+                else
+                    utils::NotSupported();
+            }
+            return true;
+        case Feature::HeapDirectlyIndexed:
+            return m_Context.extensions.EXT_mutable_descriptor_type;
+        case Feature::CooperativeVectorInferencing:
+            return m_Context.extensions.NV_cooperative_vector && m_Context.coopVecFeatures.cooperativeVector;
+        case Feature::CooperativeVectorTraining:
+            return m_Context.extensions.NV_cooperative_vector && m_Context.coopVecFeatures.cooperativeVectorTraining;
+        case Feature::Spheres:
+            return m_Context.extensions.NV_ray_tracing_linear_swept_spheres && m_Context.linearSweptSpheresFeatures.spheres;
+        case Feature::LinearSweptSpheres:
+            return m_Context.extensions.NV_ray_tracing_linear_swept_spheres && m_Context.linearSweptSpheresFeatures.linearSweptSpheres;
         default:
             return false;
         }
@@ -362,7 +437,10 @@ namespace nvrhi::vulkan
     FormatSupport Device::queryFormatSupport(Format format)
     {
         VkFormat vulkanFormat = convertFormat(format);
-        
+
+        if (vulkanFormat == VK_FORMAT_UNDEFINED)
+            return FormatSupport::None;
+
         vk::FormatProperties props;
         m_Context.physicalDevice.getFormatProperties(vk::Format(vulkanFormat), &props);
 
@@ -414,6 +492,143 @@ namespace nvrhi::vulkan
         }
 
         return result;
+    }
+
+    void Device::getCoopVecMatMulProperties() const
+    {
+        if (m_CoopVecMatMulPropertiesPopulated)
+            return;
+        m_CoopVecMatMulPropertiesPopulated = true;
+
+        if (!m_Context.extensions.NV_cooperative_vector || !m_Context.coopVecFeatures.cooperativeVector)
+            return;
+
+        uint32_t propertyCount = 0;
+        if (m_Context.physicalDevice.getCooperativeVectorPropertiesNV(
+                &propertyCount, nullptr) != vk::Result::eSuccess || propertyCount == 0)
+            return;
+
+        m_CoopVecMatMulProperties.resize(propertyCount);
+        if (m_Context.physicalDevice.getCooperativeVectorPropertiesNV(
+                &propertyCount, m_CoopVecMatMulProperties.data()) != vk::Result::eSuccess)
+            m_CoopVecMatMulProperties.clear();
+    }
+
+    // Deprecated aggregate query. Prefer the per-format CoopVec queries on IDevice.
+    coopvec::DeviceFeatures Device::queryCoopVecFeatures()
+    {
+        coopvec::DeviceFeatures result;
+
+        if (!m_Context.extensions.NV_cooperative_vector || !m_Context.coopVecFeatures.cooperativeVector)
+            return result;
+
+        getCoopVecMatMulProperties();
+
+        result.matMulFormats.reserve(m_CoopVecMatMulProperties.size());
+        for (const vk::CooperativeVectorPropertiesNV& prop : m_CoopVecMatMulProperties)
+        {
+            coopvec::MatMulFormatCombo& combo = result.matMulFormats.emplace_back();
+            combo.inputType = convertCoopVecDataType(prop.inputType);
+            combo.inputInterpretation = convertCoopVecDataType(prop.inputInterpretation);
+            combo.matrixInterpretation = convertCoopVecDataType(prop.matrixInterpretation);
+            combo.biasInterpretation = convertCoopVecDataType(prop.biasInterpretation);
+            combo.outputType = convertCoopVecDataType(prop.resultType);
+            combo.transposeSupported = !!prop.transpose;
+        }
+
+        result.trainingFloat16 = queryCoopVecTrainingFormatSupport(coopvec::DataType::Float16).bufferTrainingSupported;
+        result.trainingFloat32 = queryCoopVecTrainingFormatSupport(coopvec::DataType::Float32).bufferTrainingSupported;
+
+        return result;
+    }
+
+    // Matches the requested type combination against the cached CoopVec property list.
+    coopvec::MatMulFormatSupport Device::queryCoopVecMatMulFormatSupport(const coopvec::MatMulFormatCombo& combination)
+    {
+        coopvec::MatMulFormatSupport result{};
+        if (!m_Context.extensions.NV_cooperative_vector || !m_Context.coopVecFeatures.cooperativeVector)
+            return result;
+
+        getCoopVecMatMulProperties();
+
+        const vk::ComponentTypeKHR inputType = convertCoopVecDataType(combination.inputType);
+        const vk::ComponentTypeKHR inputInterpretation = convertCoopVecDataType(combination.inputInterpretation);
+        const vk::ComponentTypeKHR matrixInterpretation = convertCoopVecDataType(combination.matrixInterpretation);
+        const vk::ComponentTypeKHR biasInterpretation = convertCoopVecDataType(combination.biasInterpretation);
+        const vk::ComponentTypeKHR resultType = convertCoopVecDataType(combination.outputType);
+
+        for (const vk::CooperativeVectorPropertiesNV& prop : m_CoopVecMatMulProperties)
+        {
+            if (prop.inputType == inputType &&
+                prop.inputInterpretation == inputInterpretation &&
+                prop.matrixInterpretation == matrixInterpretation &&
+                prop.biasInterpretation == biasInterpretation &&
+                prop.resultType == resultType)
+            {
+                result.supported = true;
+                result.transposeSupported = prop.transpose != VK_FALSE;
+                return result;
+            }
+        }
+
+        return result;
+    }
+
+    // Vulkan reports one training accumulation flag per precision.
+    // It does not distinguish buffer and group-shared accumulate-store support.
+    coopvec::TrainingFormatSupport Device::queryCoopVecTrainingFormatSupport(coopvec::DataType componentType)
+    {
+        coopvec::TrainingFormatSupport result{};
+
+        if (!m_Context.extensions.NV_cooperative_vector || !m_Context.coopVecFeatures.cooperativeVectorTraining)
+            return result;
+
+        const auto& props = m_Context.coopVecProperties;
+
+        vk::Bool32 vkTrainingAccumulationSupported = vk::False;
+        if (componentType == coopvec::DataType::Float16)
+            vkTrainingAccumulationSupported = props.cooperativeVectorTrainingFloat16Accumulation;
+        else if (componentType == coopvec::DataType::Float32)
+            vkTrainingAccumulationSupported = props.cooperativeVectorTrainingFloat32Accumulation;
+        else
+            return result;
+
+        const bool trainingAccumulationSupported = (vkTrainingAccumulationSupported != vk::False);
+
+        // Mirror the aggregate Vulkan flag into the buffer-training details.
+        result.threadOuterProductSupported = trainingAccumulationSupported;
+        result.bufferAccumulateStoreSupported = trainingAccumulationSupported;
+        result.bufferTrainingSupported = result.threadOuterProductSupported && result.bufferAccumulateStoreSupported;
+
+        return result;
+    }
+
+    size_t Device::getCoopVecMatrixSize(coopvec::DataType type, coopvec::MatrixLayout layout, int rows, int columns)
+    {
+        if (!m_Context.extensions.NV_cooperative_vector || !m_Context.coopVecFeatures.cooperativeVector)
+            return 0;
+
+        size_t dstSize = 0;
+        size_t dataTypeSize = coopvec::getDataTypeSize(type);
+        vk::ConvertCooperativeVectorMatrixInfoNV convertInfo = {};
+        convertInfo.sType = vk::StructureType::eConvertCooperativeVectorMatrixInfoNV;
+        convertInfo.srcSize = dataTypeSize * rows * columns;
+        convertInfo.srcData.hostAddress = nullptr;
+        convertInfo.pDstSize = &dstSize;
+        convertInfo.dstData.hostAddress = nullptr;
+        convertInfo.srcComponentType = vk::ComponentTypeKHR(convertCoopVecDataType(type));
+        convertInfo.dstComponentType = convertInfo.srcComponentType;
+        convertInfo.numRows = rows;
+        convertInfo.numColumns = columns;
+        convertInfo.srcLayout = vk::CooperativeVectorMatrixLayoutNV::eRowMajor;
+        convertInfo.srcStride = dataTypeSize * columns;
+        convertInfo.dstLayout = convertCoopVecMatrixLayout(layout);
+        convertInfo.dstStride = coopvec::getOptimalMatrixStride(type, layout, rows, columns);
+
+        if (m_Context.device.convertCooperativeVectorMatrixNV(&convertInfo) == vk::Result::eSuccess)
+            return dstSize;
+
+        return 0;
     }
 
     Object Device::getNativeQueue(ObjectType objectType, CommandQueue queue)
@@ -533,6 +748,27 @@ namespace nvrhi::vulkan
         }
     }
 
+    SamplerFeedbackTextureHandle Device::createSamplerFeedbackTexture(ITexture* pairedTexture, const SamplerFeedbackTextureDesc& desc)
+    {
+        (void)pairedTexture;
+        (void)desc;
+
+        utils::NotSupported();
+
+        return nullptr;
+    }
+
+    SamplerFeedbackTextureHandle Device::createSamplerFeedbackForNativeTexture(ObjectType objectType, Object texture, ITexture* pairedTexture)
+    {
+        (void)objectType;
+        (void)texture;
+        (void)pairedTexture;
+
+        utils::NotSupported();
+
+        return nullptr;
+    }
+
     HeapHandle Device::createHeap(const HeapDesc& d)
     {
         vk::MemoryRequirements memoryRequirements;
@@ -628,5 +864,10 @@ namespace nvrhi::vulkan
     void VulkanContext::warning(const std::string& message) const
     {
         messageCallback->message(MessageSeverity::Warning, message.c_str());
+    }
+
+    void VulkanContext::info(const std::string& message) const
+    {
+        messageCallback->message(MessageSeverity::Info, message.c_str());
     }
 } // namespace nvrhi::vulkan

@@ -103,6 +103,9 @@ namespace nvrhi::d3d12
         case PrimitiveType::PatchList:
             desc.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_PATCH;
             break;
+        default:
+            m_Context.error("PrimitiveType unsupported by this device");
+            return nullptr;
         }
 
         desc.DSVFormat = getDxgiFormatMapping(fbinfo.depthFormat).rtvFormat;
@@ -177,14 +180,21 @@ namespace nvrhi::d3d12
         return pipelineState;
     }
 
-    
-    GraphicsPipelineHandle Device::createGraphicsPipeline(const GraphicsPipelineDesc& desc, IFramebuffer* fb)
+    GraphicsPipelineHandle Device::createGraphicsPipeline(const GraphicsPipelineDesc& desc, FramebufferInfo const& fbinfo)
     {
         RefCountPtr<RootSignature> pRS = getRootSignature(desc.bindingLayouts, desc.inputLayout != nullptr);
 
-        RefCountPtr<ID3D12PipelineState> pPSO = createPipelineState(desc, pRS, fb->getFramebufferInfo());
+        RefCountPtr<ID3D12PipelineState> pPSO = createPipelineState(desc, pRS, fbinfo);
 
-        return createHandleForNativeGraphicsPipeline(pRS, pPSO, desc, fb->getFramebufferInfo());
+        return createHandleForNativeGraphicsPipeline(pRS, pPSO, desc, fbinfo);
+    }
+    
+    GraphicsPipelineHandle Device::createGraphicsPipeline(const GraphicsPipelineDesc& desc, IFramebuffer* fb)
+    {
+        if (!fb)
+            return nullptr;
+            
+        return createGraphicsPipeline(desc, fb->getFramebufferInfo());
     }
 
     nvrhi::GraphicsPipelineHandle Device::createHandleForNativeGraphicsPipeline(IRootSignature* rootSignature, ID3D12PipelineState* pipelineState, const GraphicsPipelineDesc& desc, const FramebufferInfo& framebufferInfo)
@@ -268,12 +278,7 @@ namespace nvrhi::d3d12
     }
     
     void CommandList::bindFramebuffer(Framebuffer *fb)
-    {
-        if (m_EnableAutomaticBarriers)
-        {
-            setResourceStatesForFramebuffer(fb);
-        }
-        
+    {   
         static_vector<D3D12_CPU_DESCRIPTOR_HANDLE, 16> RTVs;
         for (uint32_t rtIndex = 0; rtIndex < fb->RTVs.size(); rtIndex++)
         {
@@ -298,6 +303,7 @@ namespace nvrhi::d3d12
 
         const bool updatePipeline = !m_CurrentGraphicsStateValid || m_CurrentGraphicsState.pipeline != state.pipeline;
         const bool updateIndirectParams = !m_CurrentGraphicsStateValid || m_CurrentGraphicsState.indirectParams != state.indirectParams;
+        const bool updateIndirectCountBuffer = !m_CurrentGraphicsStateValid || m_CurrentGraphicsState.indirectCountBuffer != state.indirectCountBuffer;
 
         const bool updateViewports = !m_CurrentGraphicsStateValid ||
             arraysAreDifferent(m_CurrentGraphicsState.viewport.viewports, state.viewport.viewports) ||
@@ -346,8 +352,16 @@ namespace nvrhi::d3d12
             bindFramebuffer(framebuffer);
             m_Instance->referencedResources.push_back(framebuffer);
         }
+        
+        if (m_EnableAutomaticBarriers && framebuffer && (m_BindingStatesDirty || updateFramebuffer))
+        {
+            setResourceStatesForFramebuffer(framebuffer);
+        }
 
-        setGraphicsBindings(state.bindings, bindingUpdateMask, state.indirectParams, updateIndirectParams, pso->rootSignature);
+        setGraphicsBindings(state.bindings, bindingUpdateMask,
+            state.indirectParams, updateIndirectParams,
+            state.indirectCountBuffer, updateIndirectCountBuffer,
+            pso->rootSignature);
 
         if (updateIndexBuffer)
         {
@@ -356,11 +370,6 @@ namespace nvrhi::d3d12
             if (state.indexBuffer.buffer)
             {
                 Buffer* buffer = checked_cast<Buffer*>(state.indexBuffer.buffer);
-
-                if (m_EnableAutomaticBarriers)
-                {
-                    requireBufferState(buffer, ResourceStates::IndexBuffer);
-                }
 
                 IBV.Format = getDxgiFormatMapping(state.indexBuffer.format).srvFormat;
                 IBV.SizeInBytes = (UINT)(buffer->desc.byteSize - state.indexBuffer.offset);
@@ -372,6 +381,13 @@ namespace nvrhi::d3d12
             m_ActiveCommandList->commandList->IASetIndexBuffer(&IBV);
         }
 
+        if (m_EnableAutomaticBarriers && state.indexBuffer.buffer && (m_BindingStatesDirty || updateIndexBuffer))
+        {
+            Buffer* buffer = checked_cast<Buffer*>(state.indexBuffer.buffer);
+
+            requireBufferState(buffer, ResourceStates::IndexBuffer);
+        }
+
         if (updateVertexBuffers)
         {
             D3D12_VERTEX_BUFFER_VIEW VBVs[c_MaxVertexAttributes] = {};
@@ -381,11 +397,6 @@ namespace nvrhi::d3d12
             for (const VertexBufferBinding& binding : state.vertexBuffers)
             {
                 Buffer* buffer = checked_cast<Buffer*>(binding.buffer);
-
-                if (m_EnableAutomaticBarriers)
-                {
-                    requireBufferState(buffer, ResourceStates::VertexBuffer);
-                }
 
                 // This is tested by the validation layer, skip invalid slots here if VL is not used.
                 if (binding.slot >= c_MaxVertexAttributes)
@@ -411,16 +422,25 @@ namespace nvrhi::d3d12
             m_ActiveCommandList->commandList->IASetVertexBuffers(0, maxVbIndex + 1, VBVs);
         }
 
+        if (m_EnableAutomaticBarriers && !state.vertexBuffers.empty() && (m_BindingStatesDirty || updateVertexBuffers))
+        {
+            for (const VertexBufferBinding& binding : state.vertexBuffers)
+            {
+                Buffer* buffer = checked_cast<Buffer*>(binding.buffer);
+
+                requireBufferState(buffer, ResourceStates::VertexBuffer);
+            }
+        }
+
         if (updateShadingRate || updateFramebuffer)
         {
-            auto framebufferDesc = framebuffer->getDesc();
+            const auto& framebufferDesc = framebuffer->getDesc();
             bool shouldEnableVariableRateShading = framebufferDesc.shadingRateAttachment.valid() && state.shadingRateState.enabled;
             bool variableRateShadingCurrentlyEnabled = m_CurrentGraphicsStateValid
                 && m_CurrentGraphicsState.framebuffer->getDesc().shadingRateAttachment.valid() && m_CurrentGraphicsState.shadingRateState.enabled;
 
             if (shouldEnableVariableRateShading)
             {
-                setTextureState(framebufferDesc.shadingRateAttachment.texture, nvrhi::TextureSubresourceSet(0, 1, 0, 1), nvrhi::ResourceStates::ShadingRateSurface);
                 Texture* texture = checked_cast<Texture*>(framebufferDesc.shadingRateAttachment.texture);
                 m_ActiveCommandList->commandList6->RSSetShadingRateImage(texture->resource);
             }
@@ -489,6 +509,7 @@ namespace nvrhi::d3d12
         m_CurrentRayTracingStateValid = false;
         m_CurrentGraphicsState = state;
         m_CurrentGraphicsState.dynamicStencilRefValue = effectiveStencilRefValue;
+        m_BindingStatesDirty = false;
     }
 
     void CommandList::unbindShadingRateState()
@@ -571,7 +592,26 @@ namespace nvrhi::d3d12
 
         m_ActiveCommandList->commandList->ExecuteIndirect(m_Context.drawIndexedIndirectSignature, drawCount, indirectParams->resource, offsetBytes, nullptr, 0);
     }
-    
+
+    void CommandList::drawIndexedIndirectCount(uint32_t paramOffsetBytes, uint32_t countOffsetBytes, uint32_t maxDrawCount)
+    {
+        Buffer* paramBuffer = checked_cast<Buffer*>(m_CurrentGraphicsState.indirectParams);
+        Buffer* countBuffer = checked_cast<Buffer*>(m_CurrentGraphicsState.indirectCountBuffer);
+        assert(paramBuffer);
+        assert(countBuffer);
+
+        updateGraphicsVolatileBuffers();
+
+        m_ActiveCommandList->commandList->ExecuteIndirect(
+            m_Context.drawIndexedIndirectSignature,
+            maxDrawCount,
+            paramBuffer->resource,
+            paramOffsetBytes,
+            countBuffer->resource,
+            countOffsetBytes
+        );
+    }
+
     DX12_ViewportState convertViewportState(const RasterState& rasterState, const FramebufferInfoEx& framebufferInfo, const ViewportState& vpState)
     {
         DX12_ViewportState ret;

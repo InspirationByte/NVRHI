@@ -64,9 +64,16 @@ namespace nvrhi::d3d11
                 m_SinglePassStereoSupported = true;
             }
 
+            // There is no query for HLSL extension UAV support, so query support for the oldest instruction available.
+            bool supported = false;
+            if (NvAPI_D3D11_IsNvShaderExtnOpCodeSupported(m_Context.device, NV_EXTN_OP_SHFL, &supported) == NVAPI_OK && supported)
+            {
+                m_HlslExtensionsSupported = true;
+            }
+
             // There is no query for FastGS, so query support for FP16 atomics as a proxy.
             // Both features were introduced in the same architecture (Maxwell).
-            bool supported = false;
+            supported = false;
             if (NvAPI_D3D11_IsNvShaderExtnOpCodeSupported(m_Context.device, NV_EXTN_OP_FP16_ATOMIC, &supported) == NVAPI_OK && supported)
             {
                 m_FastGeometryShaderSupported = true;
@@ -194,6 +201,27 @@ namespace nvrhi::d3d11
         utils::NotSupported();
     }
 
+    SamplerFeedbackTextureHandle Device::createSamplerFeedbackTexture(ITexture* pairedTexture, const SamplerFeedbackTextureDesc& desc)
+    {
+        (void)pairedTexture;
+        (void)desc;
+
+        utils::NotSupported();
+
+        return nullptr;
+    }
+
+    SamplerFeedbackTextureHandle Device::createSamplerFeedbackForNativeTexture(ObjectType objectType, Object texture, ITexture* pairedTexture)
+    {
+        (void)objectType;
+        (void)texture;
+        (void)pairedTexture;
+
+        utils::NotSupported();
+
+        return nullptr;
+    }
+
     bool Device::queryFeatureSupport(Feature feature, void* pInfo, size_t infoSize)
     {
         (void)pInfo;
@@ -215,6 +243,8 @@ namespace nvrhi::d3d11
 #endif
         case Feature::ConstantBufferRanges:
             return m_Context.immediateContext1 != nullptr;
+        case Feature::HlslExtensionUAV:
+            return m_HlslExtensionsSupported;
         default:
             return false;
         }
@@ -304,8 +334,15 @@ namespace nvrhi::d3d11
         return false;
     }
 
+    MeshletPipelineHandle Device::createMeshletPipeline(const MeshletPipelineDesc&, FramebufferInfo const&)
+    {
+        utils::NotSupported();
+        return nullptr;
+    }
+
     MeshletPipelineHandle Device::createMeshletPipeline(const MeshletPipelineDesc&, IFramebuffer*)
     {
+        utils::NotSupported();
         return nullptr;
     }
 
@@ -323,6 +360,13 @@ namespace nvrhi::d3d11
         waitEventQuery(m_WaitForIdleQuery);
         resetEventQuery(m_WaitForIdleQuery);
         return true;
+    }
+
+    CommandListLifetimeTrackerHandle Device::createCommandListLifetimeTracker(CommandQueue executionQueue)
+    {
+        (void)executionQueue;
+        m_Context.error("CommandListLifetimeTracker is not supported by the D3D11 backend.");
+        return nullptr;
     }
 
     SamplerHandle Device::createSampler(const SamplerDesc& d)
@@ -372,6 +416,30 @@ namespace nvrhi::d3d11
         sampler->sampler = sState;
         sampler->desc = d;
         return SamplerHandle::Create(sampler);
+    }
+
+    coopvec::DeviceFeatures Device::queryCoopVecFeatures()
+    {
+        utils::NotSupported();
+        return coopvec::DeviceFeatures();
+    }
+
+    coopvec::MatMulFormatSupport Device::queryCoopVecMatMulFormatSupport(const coopvec::MatMulFormatCombo&)
+    {
+        utils::NotSupported();
+        return coopvec::MatMulFormatSupport{};
+    }
+
+    coopvec::TrainingFormatSupport Device::queryCoopVecTrainingFormatSupport(coopvec::DataType)
+    {
+        utils::NotSupported();
+        return coopvec::TrainingFormatSupport{};
+    }
+
+    size_t Device::getCoopVecMatrixSize(coopvec::DataType, coopvec::MatrixLayout, int, int)
+    {
+        utils::NotSupported();
+        return 0;
     }
 
 } // namespace nvrhi::d3d11

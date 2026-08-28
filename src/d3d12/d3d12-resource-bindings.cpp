@@ -111,7 +111,7 @@ namespace nvrhi::d3d12
 
                     for (const auto& binding : desc.bindings)
                     {
-                        if (binding.type == ResourceType::Sampler && binding.slot == slot)
+                        if (binding.type == ResourceType::Sampler && binding.slot + binding.arrayElement == slot)
                         {
                             Sampler* sampler = checked_cast<Sampler*>(binding.resourceHandle);
                             resources.push_back(sampler);
@@ -125,7 +125,18 @@ namespace nvrhi::d3d12
                     if (!found)
                     {
                         // Create a default sampler
-                        D3D12_SAMPLER_DESC samplerDesc = {};
+                        D3D12_SAMPLER_DESC samplerDesc = {
+                            D3D12_FILTER_MIN_MAG_MIP_POINT,
+                            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+                            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+                            D3D12_TEXTURE_ADDRESS_MODE_CLAMP,
+                            0.f,
+                            0,
+                            D3D12_COMPARISON_FUNC_NONE,
+                            {},
+                            0.f,
+                            D3D12_FLOAT32_MAX
+                        };
                         m_Context.device->CreateSampler(&samplerDesc, descriptorHandle);
                     }
                 }
@@ -156,7 +167,7 @@ namespace nvrhi::d3d12
                     {
                         const BindingSetItem& binding = desc.bindings[bindingIndex];
 
-                        if (binding.slot != slot)
+                        if (binding.slot + binding.arrayElement != slot)
                             continue;
 
                         const auto bindingType = GetNormalizedResourceType(binding.type);
@@ -215,7 +226,8 @@ namespace nvrhi::d3d12
 
                             TextureSubresourceSet subresources = binding.subresources;
 
-                            texture->createSRV(descriptorHandle.ptr, binding.format, binding.dimension, subresources);
+                            texture->createSRV(descriptorHandle.ptr, binding.format, binding.dimension, subresources,
+                                resolveComponentMapping(binding.overrideComponentMapping, texture->desc.defaultComponentMapping));
                             pResource = texture;
 
                             if (!texture->permanentState)
@@ -289,10 +301,15 @@ namespace nvrhi::d3d12
                         {
                             SamplerFeedbackTexture* texture = checked_cast<SamplerFeedbackTexture*>(binding.resourceHandle);
 
+                            // No texture - fallback to a NULL descriptor created below when 'found == false'
+                            if (!texture)
+                                break;
+
                             texture->createUAV(descriptorHandle.ptr);
                             pResource = texture;
 
-                            // TODO: Automatic state transition into Unordered Access here
+                            assert(!texture->permanentState); // Sampler feedback textures cannot and shouldn't have a permanent state
+                            bindingsThatNeedTransitions.push_back(static_cast<uint16_t>(bindingIndex));
 
                             hasUavBindings = true;
                             found = true;
@@ -363,11 +380,10 @@ namespace nvrhi::d3d12
 
     DescriptorTableHandle Device::createDescriptorTable(IBindingLayout* layout)
     {
-        (void)layout; // not necessary on DX12
-
         DescriptorTable* ret = new DescriptorTable(m_Resources);
         ret->capacity = 0;
         ret->firstDescriptor = 0;
+        ret->layout = layout;
         
         return DescriptorTableHandle::Create(ret);
     }
@@ -379,9 +395,22 @@ namespace nvrhi::d3d12
         m_Resources.samplerHeap.releaseDescriptors(descriptorTableSamplers, layout->descriptorTableSizeSamplers);
     }
 
+    bool DescriptorTable::isSamplerTable() const
+    {
+        const BindlessLayoutDesc* bindlessDesc = layout ? layout->getBindlessDesc() : nullptr;
+        return bindlessDesc && bindlessDesc->layoutType == BindlessLayoutDesc::LayoutType::MutableSampler;
+    }
+
+    StaticDescriptorHeap& DescriptorTable::getDescriptorHeap() const
+    {
+        return isSamplerTable() ? m_Resources.samplerHeap : m_Resources.shaderResourceViewHeap;
+    }
+
     DescriptorTable::~DescriptorTable()
     {
-        m_Resources.shaderResourceViewHeap.releaseDescriptors(firstDescriptor, capacity);
+        StaticDescriptorHeap& heap = getDescriptorHeap();
+
+        heap.releaseDescriptors(firstDescriptor, capacity);
     }
 
     BindingLayout::BindingLayout(const BindingLayoutDesc& _desc)
@@ -426,13 +455,13 @@ namespace nvrhi::d3d12
                     D3D12_DESCRIPTOR_RANGE1& range = descriptorRangesSamplers[descriptorRangesSamplers.size() - 1];
 
                     range.RangeType = D3D12_DESCRIPTOR_RANGE_TYPE_SAMPLER;
-                    range.NumDescriptors = 1;
+                    range.NumDescriptors = binding.size;
                     range.BaseShaderRegister = binding.slot;
                     range.RegisterSpace = desc.registerSpace;
                     range.OffsetInDescriptorsFromTableStart = descriptorTableSizeSamplers;
                     range.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_NONE;
 
-                    descriptorTableSizeSamplers += 1;
+                    descriptorTableSizeSamplers += binding.size;
                 }
                 else
                 {
@@ -470,7 +499,7 @@ namespace nvrhi::d3d12
                         utils::InvalidEnum();
                         continue;
                     }
-                    range.NumDescriptors = 1;
+                    range.NumDescriptors = binding.size;
                     range.BaseShaderRegister = binding.slot;
                     range.RegisterSpace = desc.registerSpace;
                     range.OffsetInDescriptorsFromTableStart = descriptorTableSizeSRVetc;
@@ -479,7 +508,7 @@ namespace nvrhi::d3d12
                     // a buffer to the command list and then copy data into it.
                     range.Flags = D3D12_DESCRIPTOR_RANGE_FLAG_DATA_VOLATILE;
 
-                    descriptorTableSizeSRVetc += 1;
+                    descriptorTableSizeSRVetc += binding.size;
 
                     bindingLayoutsSRVetc.push_back(binding);
                 }
@@ -496,16 +525,16 @@ namespace nvrhi::d3d12
                     assert(!descriptorRangesSamplers.empty());
                     D3D12_DESCRIPTOR_RANGE1& range = descriptorRangesSamplers[descriptorRangesSamplers.size() - 1];
 
-                    range.NumDescriptors += 1;
-                    descriptorTableSizeSamplers += 1;
+                    range.NumDescriptors += binding.size;
+                    descriptorTableSizeSamplers += binding.size;
                 }
                 else
                 {
                     assert(!descriptorRangesSRVetc.empty());
                     D3D12_DESCRIPTOR_RANGE1& range = descriptorRangesSRVetc[descriptorRangesSRVetc.size() - 1];
 
-                    range.NumDescriptors += 1;
-                    descriptorTableSizeSRVetc += 1;
+                    range.NumDescriptors += binding.size;
+                    descriptorTableSizeSRVetc += binding.size;
 
                     bindingLayoutsSRVetc.push_back(binding);
                 }
@@ -623,10 +652,13 @@ namespace nvrhi::d3d12
             descriptorRange.OffsetInDescriptorsFromTableStart = 0;
         }
 
-        rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
-        rootParameter.ShaderVisibility = convertShaderStage(desc.visibility);
-        rootParameter.DescriptorTable.NumDescriptorRanges = uint32_t(descriptorRanges.size());
-        rootParameter.DescriptorTable.pDescriptorRanges = &descriptorRanges[0];
+        if (desc.layoutType == BindlessLayoutDesc::LayoutType::Immutable)
+        {
+            rootParameter.ParameterType = D3D12_ROOT_PARAMETER_TYPE_DESCRIPTOR_TABLE;
+            rootParameter.ShaderVisibility = convertShaderStage(desc.visibility);
+            rootParameter.DescriptorTable.NumDescriptorRanges = uint32_t(descriptorRanges.size());
+            rootParameter.DescriptorTable.pDescriptorRanges = &descriptorRanges[0];
+        }
     }
 
     RootSignatureHandle Device::buildRootSignature(const static_vector<BindingLayoutHandle, c_MaxBindingLayouts>& pipelineLayouts, bool allowInputLayout, bool isLocal, const D3D12_ROOT_PARAMETER1* pCustomParameters, uint32_t numCustomParameters)
@@ -645,6 +677,9 @@ namespace nvrhi::d3d12
         {
             rootParameters.push_back(pCustomParameters[index]);
         }
+
+        bool usesResourceDescriptorHeap = false;
+        bool usesSamplerDescriptorHeap = false;
 
         for(uint32_t layoutIndex = 0; layoutIndex < uint32_t(pipelineLayouts.size()); layoutIndex++)
         {
@@ -666,11 +701,28 @@ namespace nvrhi::d3d12
             else if (pipelineLayouts[layoutIndex]->getBindlessDesc())
             {
                 BindlessLayout* layout = checked_cast<BindlessLayout*>(pipelineLayouts[layoutIndex].Get());
-                RootParameterIndex rootParameterOffset = RootParameterIndex(rootParameters.size());
 
-                rootsig->pipelineLayouts.push_back(std::make_pair(layout, rootParameterOffset));
-
-                rootParameters.push_back(layout->rootParameter);
+                auto layoutType = layout->getBindlessDesc()->layoutType;
+                if (layoutType != BindlessLayoutDesc::LayoutType::Immutable)
+                {
+                    // For mutable layout types we enable the descriptor heap flags and use an invalid root parameter
+                    // There is no valid root parameter.
+                    rootsig->pipelineLayouts.push_back(std::make_pair(layout, c_InvalidRootParameterIndex));
+                    if (layoutType == BindlessLayoutDesc::LayoutType::MutableSampler)
+                    {
+                        usesSamplerDescriptorHeap = true;
+                    }
+                    else
+                    {
+                        usesResourceDescriptorHeap = true;
+                    }
+                }
+                else
+                {
+                    RootParameterIndex rootParameterOffset = RootParameterIndex(rootParameters.size());
+                    rootsig->pipelineLayouts.push_back(std::make_pair(layout, rootParameterOffset));
+                    rootParameters.push_back(layout->rootParameter);
+                }
             }
         }
 
@@ -690,8 +742,14 @@ namespace nvrhi::d3d12
 
         if (m_HeapDirectlyIndexedEnabled)
         {
-            rsDesc.Desc_1_1.Flags |= D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
-            rsDesc.Desc_1_1.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
+            if (usesSamplerDescriptorHeap)
+            {
+                rsDesc.Desc_1_1.Flags |= D3D12_ROOT_SIGNATURE_FLAG_SAMPLER_HEAP_DIRECTLY_INDEXED;
+            }
+            if (usesResourceDescriptorHeap)
+            {
+                rsDesc.Desc_1_1.Flags |= D3D12_ROOT_SIGNATURE_FLAG_CBV_SRV_UAV_HEAP_DIRECTLY_INDEXED;
+            }
         }
         
         if (!rootParameters.empty())
@@ -774,16 +832,22 @@ namespace nvrhi::d3d12
         if (binding.slot >= descriptorTable->capacity)
             return false;
 
-        D3D12_CPU_DESCRIPTOR_HANDLE descriptorHandle = m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorTable->firstDescriptor + binding.slot);
+        StaticDescriptorHeap& heap = descriptorTable->getDescriptorHeap();
+
+        D3D12_CPU_DESCRIPTOR_HANDLE descriptorHandle = heap.getCpuHandle(descriptorTable->firstDescriptor + binding.slot);
 
         switch (binding.type)
         {
         case ResourceType::None:
-            Buffer::createNullSRV(descriptorHandle.ptr, Format::UNKNOWN, m_Context);
+            if (descriptorTable->isSamplerTable())
+                utils::InvalidEnum(); // Cannot have a null sampler in D3D12
+            else
+                Buffer::createNullSRV(descriptorHandle.ptr, Format::UNKNOWN, m_Context);
             break; 
         case ResourceType::Texture_SRV: {
             Texture* texture = checked_cast<Texture*>(binding.resourceHandle);
-            texture->createSRV(descriptorHandle.ptr, binding.format, binding.dimension, binding.subresources);
+            texture->createSRV(descriptorHandle.ptr, binding.format, binding.dimension, binding.subresources,
+                resolveComponentMapping(binding.overrideComponentMapping, texture->desc.defaultComponentMapping));
             break;
         }
         case ResourceType::Texture_UAV: {
@@ -825,7 +889,12 @@ namespace nvrhi::d3d12
             m_Context.error("Attempted to bind a volatile constant buffer to a bindless set.");
             return false;
 
-        case ResourceType::Sampler:
+        case ResourceType::Sampler: {
+            Sampler* sampler = checked_cast<Sampler*>(binding.resourceHandle);
+            sampler->createDescriptor(descriptorHandle.ptr);
+            break;
+        }
+
         case ResourceType::PushConstants:
         case ResourceType::Count:
         default:
@@ -833,7 +902,7 @@ namespace nvrhi::d3d12
             return false;
         }
 
-        m_Resources.shaderResourceViewHeap.copyToShaderVisibleHeap(descriptorTable->firstDescriptor + binding.slot, 1);
+        heap.copyToShaderVisibleHeap(descriptorTable->firstDescriptor + binding.slot, 1);
         return true;
     }
 
@@ -844,9 +913,12 @@ namespace nvrhi::d3d12
         if (newSize == descriptorTable->capacity)
             return;
 
+        StaticDescriptorHeap& heap = descriptorTable->getDescriptorHeap();
+        const D3D12_DESCRIPTOR_HEAP_TYPE heapType = heap.getHeapType();
+
         if (newSize < descriptorTable->capacity)
         {
-            m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTable->firstDescriptor + newSize, descriptorTable->capacity - newSize);
+            heap.releaseDescriptors(descriptorTable->firstDescriptor + newSize, descriptorTable->capacity - newSize);
             descriptorTable->capacity = newSize;
             return;
         }
@@ -854,24 +926,24 @@ namespace nvrhi::d3d12
         uint32_t originalFirst = descriptorTable->firstDescriptor;
         if (!keepContents && descriptorTable->capacity > 0)
         {
-            m_Resources.shaderResourceViewHeap.releaseDescriptors(descriptorTable->firstDescriptor, descriptorTable->capacity);
+            heap.releaseDescriptors(descriptorTable->firstDescriptor, descriptorTable->capacity);
         }
 
-        descriptorTable->firstDescriptor = m_Resources.shaderResourceViewHeap.allocateDescriptors(newSize);
+        descriptorTable->firstDescriptor = heap.allocateDescriptors(newSize);
 
         if (keepContents && descriptorTable->capacity > 0)
         {
             m_Context.device->CopyDescriptorsSimple(descriptorTable->capacity,
-                m_Resources.shaderResourceViewHeap.getCpuHandle(descriptorTable->firstDescriptor),
-                m_Resources.shaderResourceViewHeap.getCpuHandle(originalFirst),
-                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                heap.getCpuHandle(descriptorTable->firstDescriptor),
+                heap.getCpuHandle(originalFirst),
+                heapType);
 
             m_Context.device->CopyDescriptorsSimple(descriptorTable->capacity,
-                m_Resources.shaderResourceViewHeap.getCpuHandleShaderVisible(descriptorTable->firstDescriptor),
-                m_Resources.shaderResourceViewHeap.getCpuHandle(originalFirst),
-                D3D12_DESCRIPTOR_HEAP_TYPE_CBV_SRV_UAV);
+                heap.getCpuHandleShaderVisible(descriptorTable->firstDescriptor),
+                heap.getCpuHandle(originalFirst),
+                heapType);
 
-            m_Resources.shaderResourceViewHeap.releaseDescriptors(originalFirst, descriptorTable->capacity);
+            heap.releaseDescriptors(originalFirst, descriptorTable->capacity);
         }
 
         descriptorTable->capacity = newSize;
@@ -970,12 +1042,12 @@ namespace nvrhi::d3d12
                             m_Instance->referencedResources.push_back(bindingSet);
                     }
 
-                    if (m_EnableAutomaticBarriers && (updateThisSet || bindingSet->hasUavBindings)) // UAV bindings may place UAV barriers on the same binding set
+                    if (m_EnableAutomaticBarriers && (m_BindingStatesDirty || updateThisSet || bindingSet->hasUavBindings)) // UAV bindings may place UAV barriers on the same binding set
                     {
                         setResourceStatesForBindingSet(bindingSet);
                     }
                 }
-                else
+                else if (rootParameterOffset != c_InvalidRootParameterIndex)
                 {
                     DescriptorTable* descriptorTable = checked_cast<DescriptorTable*>(_bindingSet);
 
@@ -1006,6 +1078,7 @@ namespace nvrhi::d3d12
     void CommandList::setGraphicsBindings(
         const BindingSetVector& bindings, uint32_t bindingUpdateMask,
         IBuffer* indirectParams, bool updateIndirectParams,
+        IBuffer* indirectCountBuffer, bool updateIndirectCountBuffer,
         const RootSignature* rootSignature)
     {
         if (bindingUpdateMask)
@@ -1096,12 +1169,12 @@ namespace nvrhi::d3d12
                             m_Instance->referencedResources.push_back(bindingSet);
                     }
 
-                    if (m_EnableAutomaticBarriers && (updateThisSet || bindingSet->hasUavBindings)) // UAV bindings may place UAV barriers on the same binding set
+                    if (m_EnableAutomaticBarriers && (m_BindingStatesDirty || updateThisSet || bindingSet->hasUavBindings)) // UAV bindings may place UAV barriers on the same binding set
                     {
                         setResourceStatesForBindingSet(bindingSet);
                     }
                 }
-                else if (updateThisSet)
+                else if (rootParameterOffset != c_InvalidRootParameterIndex)
                 {
                     DescriptorTable* descriptorTable = checked_cast<DescriptorTable*>(_bindingSet);
 
@@ -1119,6 +1192,15 @@ namespace nvrhi::d3d12
                 requireBufferState(indirectParams, ResourceStates::IndirectArgument);
             }
             m_Instance->referencedResources.push_back(indirectParams);
+        }
+
+        if (indirectCountBuffer && updateIndirectCountBuffer)
+        {
+            if (m_EnableAutomaticBarriers)
+            {
+                requireBufferState(indirectCountBuffer, ResourceStates::IndirectArgument);
+            }
+            m_Instance->referencedResources.push_back(indirectCountBuffer);
         }
 
         uint32_t bindingMask = (1 << uint32_t(bindings.size())) - 1;

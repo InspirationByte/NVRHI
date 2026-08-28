@@ -49,8 +49,8 @@ namespace nvrhi::d3d11
 
         return FramebufferHandle::Create(ret);
     }
-    
-    GraphicsPipelineHandle Device::createGraphicsPipeline(const GraphicsPipelineDesc& desc, IFramebuffer* fb)
+
+    GraphicsPipelineHandle Device::createGraphicsPipeline(const GraphicsPipelineDesc& desc, FramebufferInfo const& fbinfo)
     {
         const RenderState& renderState = desc.renderState;
 
@@ -62,7 +62,7 @@ namespace nvrhi::d3d11
 
         GraphicsPipeline *pso = new GraphicsPipeline();
         pso->desc = desc;
-        pso->framebufferInfo = fb->getFramebufferInfo();
+        pso->framebufferInfo = fbinfo;
 
         pso->primitiveTopology = convertPrimType(desc.primType, desc.patchControlPoints);
         pso->inputLayout = checked_cast<InputLayout*>(desc.inputLayout.Get());
@@ -102,6 +102,14 @@ namespace nvrhi::d3d11
         }
         
         return GraphicsPipelineHandle::Create(pso);
+    }
+
+    GraphicsPipelineHandle Device::createGraphicsPipeline(const GraphicsPipelineDesc& desc, IFramebuffer* fb)
+    {
+        if (!fb)
+            return nullptr;
+            
+        return createGraphicsPipeline(desc, fb->getFramebufferInfo());
     }
 
     void CommandList::bindGraphicsPipeline(const GraphicsPipeline* pso) const
@@ -248,7 +256,8 @@ namespace nvrhi::d3d11
                     maxUAVSlot = std::max(maxUAVSlot, bindingSet->maxUAVSlot);
                 }
 
-                m_Context.immediateContext->OMSetRenderTargetsAndUnorderedAccessViews(D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL, nullptr, nullptr, minUAVSlot, maxUAVSlot - minUAVSlot + 1, UAVs + minUAVSlot, initialCounts);
+                if(minUAVSlot <= maxUAVSlot)
+                    m_Context.immediateContext->OMSetRenderTargetsAndUnorderedAccessViews(D3D11_KEEP_RENDER_TARGETS_AND_DEPTH_STENCIL, nullptr, nullptr, minUAVSlot, maxUAVSlot - minUAVSlot + 1, UAVs + minUAVSlot, initialCounts);
             }
         }
 
@@ -404,6 +413,13 @@ namespace nvrhi::d3d11
                 offsetBytes += sizeof(DrawIndexedIndirectArguments);
             }
         }
+    }
+
+    void CommandList::drawIndexedIndirectCount(uint32_t paramOffsetBytes, uint32_t countOffsetBytes, uint32_t maxDrawCount)
+    {
+        (void)countOffsetBytes;
+        // D3D11 doesn't support count buffers - fall back to default drawIndexedIndirect behavior
+        drawIndexedIndirect(paramOffsetBytes, maxDrawCount);
     }
 
     ID3D11BlendState* Device::getBlendState(const BlendState& blendState)

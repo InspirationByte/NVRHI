@@ -104,7 +104,7 @@ namespace nvrhi::d3d12
         {
         case BlendOp::Add:
             return D3D12_BLEND_OP_ADD;
-        case BlendOp::Subrtact:
+        case BlendOp::Subtract:
             return D3D12_BLEND_OP_SUBTRACT;
         case BlendOp::ReverseSubtract:
             return D3D12_BLEND_OP_REV_SUBTRACT;
@@ -251,7 +251,8 @@ namespace nvrhi::d3d12
         if ((stateBits & ResourceStates::VertexBuffer) != 0) result |= D3D12_RESOURCE_STATE_VERTEX_AND_CONSTANT_BUFFER;
         if ((stateBits & ResourceStates::IndexBuffer) != 0) result |= D3D12_RESOURCE_STATE_INDEX_BUFFER;
         if ((stateBits & ResourceStates::IndirectArgument) != 0) result |= D3D12_RESOURCE_STATE_INDIRECT_ARGUMENT;
-        if ((stateBits & ResourceStates::ShaderResource) != 0) result |= D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE | D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        if ((stateBits & ResourceStates::PixelShaderResource) != 0) result |= D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+        if ((stateBits & ResourceStates::NonPixelShaderResource) != 0) result |= D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
         if ((stateBits & ResourceStates::UnorderedAccess) != 0) result |= D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
         if ((stateBits & ResourceStates::RenderTarget) != 0) result |= D3D12_RESOURCE_STATE_RENDER_TARGET;
         if ((stateBits & ResourceStates::DepthWrite) != 0) result |= D3D12_RESOURCE_STATE_DEPTH_WRITE;
@@ -269,6 +270,161 @@ namespace nvrhi::d3d12
         if ((stateBits & ResourceStates::ShadingRateSurface) != 0) result |= D3D12_RESOURCE_STATE_SHADING_RATE_SOURCE;
         if ((stateBits & ResourceStates::OpacityMicromapBuildInput) != 0) result |= D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
         if ((stateBits & ResourceStates::OpacityMicromapWrite) != 0) result |= D3D12_RESOURCE_STATE_RAYTRACING_ACCELERATION_STRUCTURE;
+        if ((stateBits & ResourceStates::ConvertCoopVecMatrixInput) != 0) result |= D3D12_RESOURCE_STATE_NON_PIXEL_SHADER_RESOURCE;
+        if ((stateBits & ResourceStates::ConvertCoopVecMatrixOutput) != 0) result |= D3D12_RESOURCE_STATE_UNORDERED_ACCESS;
+
+        return result;
+    }
+
+    static const EnhancedResourceStateMapping g_ResourceStateMap[] =
+    {
+        { ResourceStates::Common,
+            D3D12_BARRIER_SYNC_ALL,
+            D3D12_BARRIER_ACCESS_COMMON,
+            D3D12_BARRIER_LAYOUT_COMMON },
+        { ResourceStates::ConstantBuffer,
+            D3D12_BARRIER_SYNC_ALL_SHADING,
+            D3D12_BARRIER_ACCESS_CONSTANT_BUFFER,
+            D3D12_BARRIER_LAYOUT_COMMON },
+        { ResourceStates::VertexBuffer,
+            D3D12_BARRIER_SYNC_ALL_SHADING,
+            D3D12_BARRIER_ACCESS_VERTEX_BUFFER,
+            D3D12_BARRIER_LAYOUT_COMMON },
+        { ResourceStates::IndexBuffer,
+            D3D12_BARRIER_SYNC_INDEX_INPUT,
+            D3D12_BARRIER_ACCESS_INDEX_BUFFER,
+            D3D12_BARRIER_LAYOUT_COMMON },
+        { ResourceStates::IndirectArgument,
+            D3D12_BARRIER_SYNC_EXECUTE_INDIRECT,
+            D3D12_BARRIER_ACCESS_INDIRECT_ARGUMENT,
+            D3D12_BARRIER_LAYOUT_COMMON },
+        { ResourceStates::PixelShaderResource,
+            D3D12_BARRIER_SYNC_PIXEL_SHADING,
+            D3D12_BARRIER_ACCESS_SHADER_RESOURCE,
+            D3D12_BARRIER_LAYOUT_SHADER_RESOURCE },
+        { ResourceStates::NonPixelShaderResource,
+            D3D12_BARRIER_SYNC_NON_PIXEL_SHADING,
+            D3D12_BARRIER_ACCESS_SHADER_RESOURCE,
+            D3D12_BARRIER_LAYOUT_SHADER_RESOURCE },
+        { ResourceStates::UnorderedAccess,
+            D3D12_BARRIER_SYNC_ALL_SHADING,
+            D3D12_BARRIER_ACCESS_UNORDERED_ACCESS,
+            D3D12_BARRIER_LAYOUT_UNORDERED_ACCESS },
+        { ResourceStates::RenderTarget,
+            D3D12_BARRIER_SYNC_RENDER_TARGET,
+            D3D12_BARRIER_ACCESS_RENDER_TARGET,
+            D3D12_BARRIER_LAYOUT_RENDER_TARGET },
+        { ResourceStates::DepthWrite,
+            D3D12_BARRIER_SYNC_DEPTH_STENCIL,
+            D3D12_BARRIER_ACCESS_DEPTH_STENCIL_WRITE,
+            D3D12_BARRIER_LAYOUT_DEPTH_STENCIL_WRITE },
+        { ResourceStates::DepthRead,
+            D3D12_BARRIER_SYNC_DEPTH_STENCIL,
+            D3D12_BARRIER_ACCESS_DEPTH_STENCIL_READ,
+            D3D12_BARRIER_LAYOUT_DEPTH_STENCIL_READ },
+        { ResourceStates::StreamOut,
+            D3D12_BARRIER_SYNC_VERTEX_SHADING,
+            D3D12_BARRIER_ACCESS_STREAM_OUTPUT,
+            D3D12_BARRIER_LAYOUT_COMMON },
+        { ResourceStates::CopyDest,
+            D3D12_BARRIER_SYNC_COPY,
+            D3D12_BARRIER_ACCESS_COPY_DEST,
+            D3D12_BARRIER_LAYOUT_COPY_DEST },
+        { ResourceStates::CopySource,
+            D3D12_BARRIER_SYNC_COPY,
+            D3D12_BARRIER_ACCESS_COPY_SOURCE,
+            D3D12_BARRIER_LAYOUT_COPY_SOURCE },
+        { ResourceStates::ResolveDest,
+            D3D12_BARRIER_SYNC_RESOLVE,
+            D3D12_BARRIER_ACCESS_RESOLVE_DEST,
+            D3D12_BARRIER_LAYOUT_RESOLVE_DEST },
+        { ResourceStates::ResolveSource,
+            D3D12_BARRIER_SYNC_RESOLVE,
+            D3D12_BARRIER_ACCESS_RESOLVE_SOURCE,
+            D3D12_BARRIER_LAYOUT_RESOLVE_SOURCE },
+        { ResourceStates::Present,
+            D3D12_BARRIER_SYNC_ALL,
+            D3D12_BARRIER_ACCESS_COPY_SOURCE,
+            D3D12_BARRIER_LAYOUT_PRESENT },
+        { ResourceStates::AccelStructRead,
+            D3D12_BARRIER_SYNC_ALL_SHADING, // Could be an RT pipeline or other shaders
+            D3D12_BARRIER_ACCESS_RAYTRACING_ACCELERATION_STRUCTURE_READ,
+            D3D12_BARRIER_LAYOUT_COMMON },
+        { ResourceStates::AccelStructWrite,
+            D3D12_BARRIER_SYNC_BUILD_RAYTRACING_ACCELERATION_STRUCTURE,
+            D3D12_BARRIER_ACCESS_RAYTRACING_ACCELERATION_STRUCTURE_READ | D3D12_BARRIER_ACCESS_RAYTRACING_ACCELERATION_STRUCTURE_WRITE,
+            D3D12_BARRIER_LAYOUT_COMMON },
+        { ResourceStates::AccelStructBuildInput,
+            D3D12_BARRIER_SYNC_BUILD_RAYTRACING_ACCELERATION_STRUCTURE,
+            D3D12_BARRIER_ACCESS_SHADER_RESOURCE,
+            D3D12_BARRIER_LAYOUT_COMMON },
+        { ResourceStates::AccelStructBuildBlas,
+            D3D12_BARRIER_SYNC_BUILD_RAYTRACING_ACCELERATION_STRUCTURE,
+            D3D12_BARRIER_ACCESS_RAYTRACING_ACCELERATION_STRUCTURE_READ,
+            D3D12_BARRIER_LAYOUT_COMMON },
+        { ResourceStates::ShadingRateSurface,
+            D3D12_BARRIER_SYNC_ALL_SHADING,
+            D3D12_BARRIER_ACCESS_SHADING_RATE_SOURCE,
+            D3D12_BARRIER_LAYOUT_SHADING_RATE_SOURCE },
+        { ResourceStates::OpacityMicromapWrite,
+            D3D12_BARRIER_SYNC_BUILD_RAYTRACING_ACCELERATION_STRUCTURE,
+            D3D12_BARRIER_ACCESS_RAYTRACING_ACCELERATION_STRUCTURE_WRITE,
+            D3D12_BARRIER_LAYOUT_COMMON },
+        { ResourceStates::OpacityMicromapBuildInput,
+            D3D12_BARRIER_SYNC_ALL_SHADING,
+            D3D12_BARRIER_ACCESS_SHADER_RESOURCE,
+            D3D12_BARRIER_LAYOUT_SHADER_RESOURCE },
+        { ResourceStates::ConvertCoopVecMatrixInput,
+            D3D12_BARRIER_SYNC_CONVERT_LINEAR_ALGEBRA_MATRIX,
+            D3D12_BARRIER_ACCESS_SHADER_RESOURCE,
+            D3D12_BARRIER_LAYOUT_SHADER_RESOURCE },
+        { ResourceStates::ConvertCoopVecMatrixOutput,
+            D3D12_BARRIER_SYNC_CONVERT_LINEAR_ALGEBRA_MATRIX,
+            D3D12_BARRIER_ACCESS_UNORDERED_ACCESS,
+            D3D12_BARRIER_LAYOUT_UNORDERED_ACCESS },
+    };
+
+    EnhancedResourceStateMapping convertResourceStatesForEnhancedBarriers(ResourceStates state, bool isTexture)
+    {
+        EnhancedResourceStateMapping result = {};
+
+        constexpr uint32_t numStateBits = sizeof(g_ResourceStateMap) / sizeof(g_ResourceStateMap[0]);
+
+        uint32_t stateTmp = uint32_t(state);
+        uint32_t bitIndex = 0;
+
+        while (stateTmp != 0 && bitIndex < numStateBits)
+        {
+            uint32_t bit = (1 << bitIndex);
+
+            if (stateTmp & bit)
+            {
+                const EnhancedResourceStateMapping& mapping = g_ResourceStateMap[bitIndex];
+
+                assert(uint32_t(mapping.nvrhiState) == bit);
+
+                result.nvrhiState = ResourceStates(result.nvrhiState | mapping.nvrhiState);
+                result.access |= mapping.access;
+                result.sync |= mapping.sync;
+                if (isTexture)
+                {
+                    if (result.layout == D3D12_BARRIER_LAYOUT_COMMON)
+                    {
+                        result.layout = mapping.layout;
+                    }
+                    else
+                    {
+                        assert(result.layout == mapping.layout);
+                    }
+                }
+
+                stateTmp &= ~bit;
+            }
+
+            bitIndex++;
+        }
+
+        assert(result.nvrhiState == state);
 
         return result;
     }
@@ -312,5 +468,122 @@ namespace nvrhi::d3d12
             return D3D12_SHADING_RATE_COMBINER_PASSTHROUGH;
         }
     }
+
+#if NVRHI_D3D12_WITH_COOP_VECTOR_COMMON
+    D3D12_LINEAR_ALGEBRA_DATATYPE convertCoopVecDataType(coopvec::DataType type)
+    {
+        switch (type)
+        {
+        case coopvec::DataType::UInt8:
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_UINT8;
+        case coopvec::DataType::SInt8:
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_SINT8;
+        case coopvec::DataType::UInt8Packed:
+#if NVRHI_D3D12_WITH_LINALG
+            // Not support in 720
+            utils::InvalidEnum();
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT32;
+#else
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_UINT8_T4_PACKED;
+#endif
+        case coopvec::DataType::SInt8Packed:
+#if NVRHI_D3D12_WITH_LINALG
+            // Not support in 720
+            utils::InvalidEnum();
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT32;
+#else
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_SINT8_T4_PACKED;
+#endif
+        case coopvec::DataType::UInt16:
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_UINT16;
+        case coopvec::DataType::SInt16:
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_SINT16;
+        case coopvec::DataType::UInt32:
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_UINT32;
+        case coopvec::DataType::SInt32:
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_SINT32;
+        case coopvec::DataType::FloatE4M3:
+#if NVRHI_D3D12_WITH_LINALG
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT8_E4M3FN;
+#else
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT_E4M3;
+#endif
+        case coopvec::DataType::FloatE5M2:
+#if NVRHI_D3D12_WITH_LINALG
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT8_E5M2;
+#else
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT_E5M2;
+#endif
+        case coopvec::DataType::Float16:
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT16;
+        case coopvec::DataType::Float32:
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT32;
+        default:
+            utils::InvalidEnum();
+            return D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT32;
+        }
+    }
+
+    coopvec::DataType convertCoopVecDataType(D3D12_LINEAR_ALGEBRA_DATATYPE type)
+    {
+        switch (type)
+        {
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_UINT8:
+            return coopvec::DataType::UInt8;
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_SINT8:
+            return coopvec::DataType::SInt8;
+#if !NVRHI_D3D12_WITH_LINALG
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_UINT8_T4_PACKED:
+            return coopvec::DataType::UInt8Packed;
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_SINT8_T4_PACKED:
+            return coopvec::DataType::SInt8Packed;
+#endif
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_UINT16:
+            return coopvec::DataType::UInt16;
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_SINT16:
+            return coopvec::DataType::SInt16;
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_UINT32:
+            return coopvec::DataType::UInt32;
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_SINT32:
+            return coopvec::DataType::SInt32;
+#if NVRHI_D3D12_WITH_LINALG
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT8_E4M3FN:
+            return coopvec::DataType::FloatE4M3;
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT8_E5M2:
+            return coopvec::DataType::FloatE5M2;
+#else
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT_E4M3:
+            return coopvec::DataType::FloatE4M3;
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT_E5M2:
+            return coopvec::DataType::FloatE5M2;
+#endif
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT16:
+            return coopvec::DataType::Float16;
+        case D3D12_LINEAR_ALGEBRA_DATATYPE_FLOAT32:
+            return coopvec::DataType::Float32;
+        default:
+            utils::InvalidEnum();
+            return coopvec::DataType::Float32;
+        }
+    }
+    
+    D3D12_LINEAR_ALGEBRA_MATRIX_LAYOUT convertCoopVecMatrixLayout(coopvec::MatrixLayout layout)
+    {
+        switch (layout)
+        {
+        case coopvec::MatrixLayout::RowMajor:
+            return D3D12_LINEAR_ALGEBRA_MATRIX_LAYOUT_ROW_MAJOR;
+        case coopvec::MatrixLayout::ColumnMajor:
+            return D3D12_LINEAR_ALGEBRA_MATRIX_LAYOUT_COLUMN_MAJOR;
+        case coopvec::MatrixLayout::InferencingOptimal:
+            return D3D12_LINEAR_ALGEBRA_MATRIX_LAYOUT_MUL_OPTIMAL;
+        case coopvec::MatrixLayout::TrainingOptimal:
+            return D3D12_LINEAR_ALGEBRA_MATRIX_LAYOUT_OUTER_PRODUCT_OPTIMAL;
+        default:
+            utils::InvalidEnum();
+            return D3D12_LINEAR_ALGEBRA_MATRIX_LAYOUT_ROW_MAJOR;
+        }
+    }
+#endif
 
 } // namespace nvrhi::d3d12

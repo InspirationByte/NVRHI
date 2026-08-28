@@ -105,7 +105,7 @@ struct static_vector : private std::array<T, _max_elements>
 
     void swap(static_vector& other) noexcept
     {
-        base::swap(*this);
+        base::swap(other);
         std::swap(current_size, other.current_size);
     }
 
@@ -149,7 +149,9 @@ struct static_vector : private std::array<T, _max_elements>
 
     reference emplace_back() noexcept
     {
-        resize(current_size + 1);
+        assert(current_size < max_elements);
+        ++current_size;
+        back() = T{};
         return back();
     }
 

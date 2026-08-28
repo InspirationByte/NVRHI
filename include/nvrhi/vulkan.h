@@ -43,8 +43,6 @@ namespace nvrhi::vulkan
         virtual void queueWaitForSemaphore(CommandQueue waitQueue, VkSemaphore semaphore, uint64_t value) = 0;
         virtual void queueSignalSemaphore(CommandQueue executionQueue, VkSemaphore semaphore, uint64_t value) = 0;
         virtual uint64_t queueGetCompletedInstance(CommandQueue queue) = 0;
-        virtual FramebufferHandle createHandleForNativeFramebuffer(VkRenderPass renderPass, 
-            VkFramebuffer framebuffer, const FramebufferDesc& desc, bool transferOwnership) = 0;
     };
 
     typedef RefCountPtr<IDevice> DeviceHandle;
@@ -77,7 +75,14 @@ namespace nvrhi::vulkan
 
         // Indicates if VkPhysicalDeviceVulkan12Features::bufferDeviceAddress was set to 'true' at device creation time
         bool bufferDeviceAddressSupported = false;
+        // Indicates if VkPhysicalDeviceVulkan12Features::descriptorBindingUniformBufferUpdateAfterBind was set to
+        // 'true' at device creation time. Without it, ConstantBuffer entries of a bindless layout do not get
+        // UPDATE_AFTER_BIND. The other descriptorBinding*UpdateAfterBind features are required by bindless layouts.
+        bool descriptorBindingUniformBufferUpdateAfterBind = false;
         bool aftermathEnabled = false;
+        bool logBufferLifetime = false;
+
+        std::string vulkanLibraryName; // if empty, use default
     };
 
     NVRHI_API DeviceHandle createDevice(const DeviceDesc& desc);
