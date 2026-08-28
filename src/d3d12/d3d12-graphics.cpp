@@ -85,6 +85,18 @@ namespace nvrhi::d3d12
         const RasterState& rasterState = state.renderState.rasterState;
         TranslateRasterizerState(rasterState, desc.RasterizerState);
 
+        switch (state.stripIndexFormat)
+        {
+        case Format::R16_UINT:
+            desc.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFF;
+            break;
+        case Format::R32_UINT:
+            desc.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_0xFFFFFFFF;
+            break;
+        default:
+            desc.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED;
+        }
+
         switch (state.primType)
         {
         case PrimitiveType::PointList:

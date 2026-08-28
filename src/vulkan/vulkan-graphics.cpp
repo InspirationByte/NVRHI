@@ -306,7 +306,8 @@ namespace nvrhi::vulkan
         }
 
         auto inputAssembly = vk::PipelineInputAssemblyStateCreateInfo()
-                                .setTopology(convertPrimitiveTopology(desc.primType));
+                                .setTopology(convertPrimitiveTopology(desc.primType))
+                                .setPrimitiveRestartEnable(desc.stripIndexFormat != nvrhi::Format::UNKNOWN);
 
         // fixed function state
         const auto& rasterState = desc.renderState.rasterState;
