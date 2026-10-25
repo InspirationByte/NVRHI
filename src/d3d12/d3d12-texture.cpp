@@ -1168,7 +1168,7 @@ namespace nvrhi::d3d12
             {
                 DescriptorIndex index = t->getClearMipLevelUAV(mipLevel, Format::UNKNOWN);
 
-                assert(index != c_InvalidDescriptorIndex);
+                assert(index != DescriptorIndex{});
 
                 m_ActiveCommandList->commandList->ClearUnorderedAccessViewFloat(
                     m_Resources.shaderResourceViewHeap.getGpuHandle(index),
@@ -1286,7 +1286,7 @@ namespace nvrhi::d3d12
             {
                 DescriptorIndex index = t->getClearMipLevelUAV(mipLevel, interpretFormat);
 
-                assert(index != c_InvalidDescriptorIndex);
+                assert(index != DescriptorIndex{});
 
                 m_ActiveCommandList->commandList->ClearUnorderedAccessViewUint(
                     m_Resources.shaderResourceViewHeap.getGpuHandle(index),

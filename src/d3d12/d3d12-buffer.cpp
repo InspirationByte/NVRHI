@@ -633,7 +633,7 @@ namespace nvrhi::d3d12
         commitDescriptorHeaps();
 
         DescriptorIndex clearUAV = b->getClearUAV();
-        assert(clearUAV != c_InvalidDescriptorIndex);
+        assert(clearUAV != DescriptorIndex{});
 
         m_Instance->referencedResources.push_back(b);
 
