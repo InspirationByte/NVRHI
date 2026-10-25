@@ -133,7 +133,7 @@ OffsetAllocator::OffsetAllocator(uint32 maxAllocs)
 {
 	if constexpr (sizeof(NodeIndex) == 2)
 	{
-		ASSERT(maxAllocs <= USHRT_MAX) //  maxAllocs is limited by USE_16_BIT_NODE_INDICES
+		ASSERT(maxAllocs <= USHRT_MAX); //  maxAllocs is limited by USE_16_BIT_NODE_INDICES
 	}
 }
 
@@ -301,14 +301,14 @@ OffsetAllocator::Alloc OffsetAllocator::allocate(uint32 size)
 
 void OffsetAllocator::free(NodeIndex nodeIndex)
 {
-	ASSERT(nodeIndex != Alloc::NO_SPACE) // Allocation is not valid
+	ASSERT(nodeIndex != Alloc::NO_SPACE); // Allocation is not valid
 
 	if (nodeIndex == Alloc::NO_SPACE || !m_nodes)
 		return;
 
 	Node& node = m_nodes[nodeIndex];
 
-	ASSERT(node.used == true) //  Double free on node
+	ASSERT(node.used == true); //  Double free on node
 
 	// Merge with neighbors...
 	uint32 offset = node.dataOffset;
