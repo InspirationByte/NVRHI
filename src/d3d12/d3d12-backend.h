@@ -231,9 +231,25 @@ namespace nvrhi::d3d12
 
         uint8_t getFormatPlaneCount(DXGI_FORMAT format);
 
+        // Sampler descriptor tables are shared between binding sets with the same sampler descriptors,
+        // because the shader-visible sampler heap is limited to D3D12_MAX_SHADER_VISIBLE_SAMPLER_HEAP_SIZE.
+        DescriptorIndex acquireSamplerTable(const D3D12_SAMPLER_DESC* samplerDescs, uint32_t count);
+        void releaseSamplerTable(DescriptorIndex table);
+
     private:
+        struct SamplerTable
+        {
+            DescriptorIndex descriptors;
+            uint32_t refCount = 0;
+        };
+
         const Context& m_Context;
         std::unordered_map<DXGI_FORMAT, uint8_t> m_DxgiFormatPlaneCounts;
+
+        // key is the raw bytes of the table's D3D12_SAMPLER_DESC array
+        std::unordered_map<std::string, SamplerTable> m_SamplerTables;
+        std::unordered_map<uint32_t, std::string> m_SamplerTableKeys; // table offset -> key
+        std::mutex m_SamplerTablesMutex;
     };
 
 
@@ -470,6 +486,7 @@ namespace nvrhi::d3d12
         void createDescriptor(size_t descriptor) const;
 
         const SamplerDesc& getDesc() const override { return m_Desc; }
+        const D3D12_SAMPLER_DESC& getD3D12Desc() const { return m_d3d12desc; }
 
     private:
         const Context& m_Context;
