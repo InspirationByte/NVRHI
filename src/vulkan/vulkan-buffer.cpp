@@ -466,15 +466,34 @@ namespace nvrhi::vulkan
 
         const size_t vkCmdUpdateBufferLimit = 65536;
 
-        // Per Vulkan spec, vkCmdUpdateBuffer requires that the data size is smaller than or equal to 64 kB,
-        // and that the offset and data size are a multiple of 4. We can't change the offset, but data size
-        // is rounded up later.
-        if (dataSize <= vkCmdUpdateBufferLimit && (destOffsetBytes & 3) == 0)
+        if (buffer->desc.cpuAccess != CpuAccessMode::None)
         {
+            // Mappable buffers can only be updated by vkCmdUpdateBuffer, which must run
+            // outside a render pass and requires the offset and size to be 4-byte aligned
+            if (dataSize > vkCmdUpdateBufferLimit || (destOffsetBytes & 3) != 0)
+            {
+                m_Context.error("Using writeBuffer on mappable buffers is invalid");
+                return;
+            }
+
             if (m_EnableAutomaticBarriers)
             {
                 requireBufferState(buffer, ResourceStates::CopyDest);
                 m_BindingStatesDirty = true;
+
+                // see the comment in clearBufferUInt about write ordering
+                vk::BufferMemoryBarrier2 writeOrderBarrier = vk::BufferMemoryBarrier2()
+                    .setSrcStageMask(vk::PipelineStageFlagBits2::eAllCommands)
+                    .setSrcAccessMask(vk::AccessFlagBits2::eMemoryWrite)
+                    .setDstStageMask(vk::PipelineStageFlagBits2::eTransfer)
+                    .setDstAccessMask(vk::AccessFlagBits2::eTransferWrite | vk::AccessFlagBits2::eTransferRead)
+                    .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .setBuffer(buffer->buffer)
+                    .setOffset(0)
+                    .setSize(buffer->desc.byteSize);
+
+                m_CurrentCmdBuf->cmdBuf.pipelineBarrier2(vk::DependencyInfo().setBufferMemoryBarriers({writeOrderBarrier}));
             }
             commitBarriers();
 
@@ -485,22 +504,39 @@ namespace nvrhi::vulkan
         }
         else
         {
-            if (buffer->desc.cpuAccess != CpuAccessMode::Write)
+            if (m_EnableAutomaticBarriers)
             {
-                // use the upload manager
-                Buffer* uploadBuffer;
-                uint64_t uploadOffset;
-                void* uploadCpuVA;
-                m_UploadManager->suballocateBuffer(dataSize, &uploadBuffer, &uploadOffset, &uploadCpuVA, MakeVersion(m_CurrentCmdBuf->recordingID, m_CommandListParameters.queueType, false));
+                requireBufferState(buffer, ResourceStates::CopyDest);
+                m_BindingStatesDirty = true;
 
-                memcpy(uploadCpuVA, data, dataSize);
+                // see the comment in clearBufferUInt about write ordering
+                vk::BufferMemoryBarrier2 writeOrderBarrier = vk::BufferMemoryBarrier2()
+                    .setSrcStageMask(vk::PipelineStageFlagBits2::eAllCommands)
+                    .setSrcAccessMask(vk::AccessFlagBits2::eMemoryWrite)
+                    .setDstStageMask(vk::PipelineStageFlagBits2::eTransfer)
+                    .setDstAccessMask(vk::AccessFlagBits2::eTransferWrite | vk::AccessFlagBits2::eTransferRead)
+                    .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                    .setBuffer(buffer->buffer)
+                    .setOffset(0)
+                    .setSize(buffer->desc.byteSize);
 
-                copyBuffer(buffer, destOffsetBytes, uploadBuffer, uploadOffset, dataSize);
+                m_CurrentCmdBuf->cmdBuf.pipelineBarrier2(vk::DependencyInfo().setBufferMemoryBarriers({writeOrderBarrier}));
             }
-            else
-            {
-                m_Context.error("Using writeBuffer on mappable buffers is invalid");
-            }
+            commitBarriers();
+
+            // Use the upload manager even for small writes: on UMA devices some drivers
+            // (e.g. RADV) implement vkCmdUpdateBuffer by writing host-visible memory on the
+            // CPU at recording time, which races GPU reads of the earlier submissions;
+            // a GPU-side copy keeps the writes ordered with the submitted commands
+            Buffer* uploadBuffer;
+            uint64_t uploadOffset;
+            void* uploadCpuVA;
+            m_UploadManager->suballocateBuffer(dataSize, &uploadBuffer, &uploadOffset, &uploadCpuVA, MakeVersion(m_CurrentCmdBuf->recordingID, m_CommandListParameters.queueType, false));
+
+            memcpy(uploadCpuVA, data, dataSize);
+
+            copyBuffer(buffer, destOffsetBytes, uploadBuffer, uploadOffset, dataSize);
         }
     }
 
@@ -518,6 +554,26 @@ namespace nvrhi::vulkan
             m_BindingStatesDirty = true;
         }
         commitBarriers();
+
+        // the per-command-list state tracker assumes buffers with keepInitialState always
+        // start in their initial state, so a write after a write (or a clear after a write)
+        // in the same or an earlier submission gets no transition barrier; enforce the
+        // ordering explicitly, as Vulkan does not order unordered writes
+        if (m_EnableAutomaticBarriers)
+        {
+            vk::BufferMemoryBarrier2 writeOrderBarrier = vk::BufferMemoryBarrier2()
+                .setSrcStageMask(vk::PipelineStageFlagBits2::eAllCommands)
+                .setSrcAccessMask(vk::AccessFlagBits2::eMemoryWrite)
+                .setDstStageMask(vk::PipelineStageFlagBits2::eTransfer)
+                .setDstAccessMask(vk::AccessFlagBits2::eTransferWrite | vk::AccessFlagBits2::eTransferRead)
+                .setSrcQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .setDstQueueFamilyIndex(VK_QUEUE_FAMILY_IGNORED)
+                .setBuffer(buffer->buffer)
+                .setOffset(0)
+                .setSize(buffer->desc.byteSize);
+
+            m_CurrentCmdBuf->cmdBuf.pipelineBarrier2(vk::DependencyInfo().setBufferMemoryBarriers({writeOrderBarrier}));
+        }
 
         m_CurrentCmdBuf->cmdBuf.fillBuffer(buffer->buffer, 0, buffer->desc.byteSize, clearValue);
         m_CurrentCmdBuf->referencedResources.push_back(b);
